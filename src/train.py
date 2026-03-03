@@ -1,6 +1,7 @@
 import torch
 import time
 import os
+import json
 import torch.nn as nn 
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -12,10 +13,12 @@ from model.ViT_model import AcousticViT
 from model.ast_models import ASTModel
 from dataset.qiandao_dataset import AudioDataset
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from torch.utils.tensorboard import SummaryWriter
 
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device):
+def train_one_epoch(model, dataloader, criterion, optimizer, device, global_step, writer):
+    
     model.train()
 
     total_loss = 0.0
@@ -41,16 +44,19 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
         preds = logits.argmax(dim=1)
         correct += (preds == y).sum().item()
         total += x.size(0)
+        global_step += 1
 
         # tqdm 实时显示
         pbar.set_postfix(
             loss=f"{loss.item():.4f}",
             acc=f"{correct / total:.4f}"
         )
+        writer.add_scalar('Loss/train', loss.item(), global_step)
+        writer.add_scalar('Accuracy/train', correct / total, global_step)
 
     avg_loss = total_loss / total
     accuracy = correct / total
-    return avg_loss, accuracy
+    return avg_loss, accuracy, global_step
 
 
 @torch.no_grad()
@@ -194,16 +200,33 @@ if __name__ == "__main__":
         log_file = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs/{model_name}_log_{timestamp}.txt"
         os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs", exist_ok=True)
         os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt", exist_ok=True)
+        writer = SummaryWriter(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/tensorboard/{model_name}_{timestamp}")
+        global_step = 0
+        best_acc = 0.0
+        args_dict = vars(args)
+
+        with open(log_file, "w") as f:
+            f.write("="*60 + "\n")
+            f.write("Experiment Configuration\n")
+            f.write("="*60 + "\n")
+            f.write(json.dumps(args_dict, indent=4))
+            f.write("\n" + "="*60 + "\n\n")
         for epoch in range(num_epochs):
-            train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+            train_loss, train_acc, global_step = train_one_epoch(model, train_loader, criterion, optimizer, device, global_step, writer)
             val_loss, val_acc = validate(model, val_loader, criterion, device)
             log_str = (f"Epoch [{epoch+1}/{num_epochs}] "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
                 f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
-
+            writer.add_scalar('Loss/val', val_loss, epoch)
+            writer.add_scalar('Accuracy/val', val_acc, epoch)
             print(log_str)
             with open(log_file, "a") as f:
                 f.write(log_str + "\n")
+            save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_best.pth"
+            if val_acc > best_acc:
+                best_acc = val_acc
+                torch.save(model.state_dict(), save_path)
+        writer.close()
         save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_{timestamp}.pth"
         torch.save(model.state_dict(), save_path)
         print(f"Model saved to {save_path}")

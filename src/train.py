@@ -2,6 +2,8 @@ import torch
 import time
 import os
 import json
+import matplotlib.pyplot as plt
+import numpy as np
 import torch.nn as nn 
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -12,9 +14,9 @@ from model.ResNet import ResNetAudio
 from model.ViT_model import AcousticViT
 from model.ast_models import ASTModel
 from dataset.qiandao_dataset import AudioDataset
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from torch.utils.tensorboard import SummaryWriter
-
+from model.Beats.Beats_Transfer import BEATsTransferLearningModel
 
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, global_step, writer):
@@ -94,7 +96,7 @@ def validate(model, dataloader, criterion, device):
     return avg_loss, accuracy
 
 @torch.no_grad()
-def evalute(model, dataloader, device):
+def evalute(model, dataloader, device, class_names=None, save_path=None):
     model.eval()
 
     all_preds = []
@@ -109,14 +111,40 @@ def evalute(model, dataloader, device):
 
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(y.cpu().numpy())
-
     accuracy = accuracy_score(all_labels, all_preds)
     precision = precision_score(all_labels, all_preds)
-    recall = recall_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds)
+    recall = recall_score(all_labels, all_preds, average='macro')
+    f1 = f1_score(all_labels, all_preds, average='macro')
 
     print("Evaluation Results:")
     print(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+
+    # ===== 混淆矩阵 =====
+    cm = confusion_matrix(all_labels, all_preds)
+
+    plt.figure()
+    plt.imshow(cm)
+    plt.colorbar()
+    
+    if class_names is not None:
+        plt.xticks(np.arange(len(class_names)), class_names, rotation=45)
+        plt.yticks(np.arange(len(class_names)), class_names)
+
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title("Confusion Matrix")
+
+    # 在格子中显示数值
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            plt.text(j, i, cm[i, j], ha='center', va='center')
+
+    plt.tight_layout()
+
+    if save_path is not None:
+        plt.savefig(save_path)
+
+    plt.show()
 
     return accuracy, precision, recall, f1
 
@@ -168,11 +196,37 @@ if __name__ == "__main__":
         audioset_pretrain=True,
         model_size='base384'
         ).to(device)
+    elif model_name.lower() == 'beats':
+        model = BEATsTransferLearningModel(
+            num_target_classes=4,
+            ft_entire_network=False
+        )
+
+        model.to(device)
+        if model.ft_entire_network:
+            optimizer = torch.optim.AdamW(
+                [
+                    {"params": model.beats.parameters()},
+                    {"params": model.fc.parameters()}
+                ],
+                lr=lr,
+                betas=(0.9, 0.98),
+                weight_decay=1e-5
+            )
+        else:
+            optimizer = torch.optim.AdamW(
+                model.fc.parameters(),
+                lr=lr,
+                betas=(0.9, 0.98),
+                weight_decay=1e-5
+    )
+    
+    if model_name.lower() != 'beats':
+        optimizer = torch.optim.Adam(model.parameters(), 
+                                    lr=lr,
+                                    weight_decay=1e-5
+                                    )
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), 
-                                lr=lr,
-                                weight_decay=1e-5
-                                )
     print("使用的模型为：", model_name)
     if args.mode == 'evaluate':
         val_data_path = args.eval_data_json
@@ -182,7 +236,11 @@ if __name__ == "__main__":
         model_path = '/data/zcx/wav_prj/Qiandao/src/exp/ckpt/audiocnn1d_20260120-122121.pth'  # 修改为实际模型路径
         
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-        evalute(model, test_loader, device)
+        if args.classes == 4:
+            class_names = ['Cargo', 'Fishing', 'Passenger', 'Other']
+        else:
+            class_names = None
+        evalute(model, test_loader, device, class_names=class_names, save_path=f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/confusion_matrix.png")
         exit(0)
     else:
 

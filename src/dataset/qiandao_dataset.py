@@ -97,7 +97,7 @@ class AudioDataset(Dataset):
             fbank = torchaudio.compliance.kaldi.fbank(
                 waveform,
                 htk_compat=True,
-                sample_frequency=16000,
+                sample_frequency=self.sr,
                 window_type='hanning',
                 use_energy=False,
                 num_mel_bins=128,
@@ -138,6 +138,8 @@ class AudioDataset(Dataset):
 
              # the output fbank shape is [time_frame_num, frequency_bins], e.g., [1024, 128]
             return fbank, torch.tensor(label, dtype=torch.long)
+        elif self.transform == 'raw':
+            return waveform, torch.tensor(label, dtype=torch.long)
 
 
 

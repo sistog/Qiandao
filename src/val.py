@@ -10,6 +10,7 @@ from model.LSTM_NET import AudioLSTM
 from model.ResNet import ResNetAudio
 from model.ViT_model import AcousticViT
 from dataset.qiandao_dataset import AudioDataset
+from model.ast_models import ASTModel
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from pathlib import Path
 from collections import defaultdict
@@ -21,13 +22,22 @@ import torch.nn.functional as F
 CLASS_NAMES = ['Cargo', 'Passengership', 'Tanker', 'Tug']
 CLASS_TO_IDX = {cls: idx for idx, cls in enumerate(CLASS_NAMES)}
 IDX_TO_CLASS = {idx: cls for idx, cls in enumerate(CLASS_NAMES)}
-transform = 'fbank'
+transform = 'ast'
 n_fft = 8192
 
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = ResNetAudio(num_classes=4).to(device)
-    ckpt_path = "/data/zcx/wav_prj/Qiandao/src/exp/Deepship/ckpt/ResNetAudio_20260124-121641.pth"
+    model = ASTModel(
+        label_dim=4,
+        fstride=10,
+        tstride=10,
+        input_fdim=128,
+        input_tdim=512,
+        imagenet_pretrain=True,
+        audioset_pretrain=True,
+        model_size='base384'
+        ).to(device)
+    ckpt_path = "/data/zcx/wav_prj/Qiandao/src/exp/Deepship/ckpt/ast_best.pth"
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
     print("模型加载成功")
@@ -87,6 +97,53 @@ def preprocess_audio(audio_path, target_length=512):
         )
         # 最终输出格式[C, F, T]
         return fbank_resized
+    elif transform == "ast":
+        target_length = 512
+        fbank = torchaudio.compliance.kaldi.fbank(
+            waveform,
+            htk_compat=True,
+            sample_frequency=16000,
+            window_type='hanning',
+            use_energy=False,
+            num_mel_bins=128,
+            dither=0.0,
+            frame_shift=10
+        )
+
+        n_frames = fbank.shape[0]
+
+        if n_frames < target_length:
+            fbank = torch.nn.functional.pad(
+                fbank,
+                (0, 0, 0, target_length - n_frames)
+            )
+        else:
+            fbank = fbank[:target_length, :]
+        
+        norm_mean = 0
+        norm_std = 1
+        freqm = 24
+        timem = 96
+
+            # SpecAug, not do for eval set
+        freqm = torchaudio.transforms.FrequencyMasking(freqm)
+        timem = torchaudio.transforms.TimeMasking(timem)
+        fbank = torch.transpose(fbank, 0, 1)
+        # this is just to satisfy new torchaudio version, which only accept [1, freq, time]
+        fbank = fbank.unsqueeze(0)
+        if freqm != 0:
+            fbank = freqm(fbank)
+        if timem != 0:
+            fbank = timem(fbank)
+        # squeeze it back, it is just a trick to satisfy new torchaudio version
+        fbank = fbank.squeeze(0)
+        fbank = torch.transpose(fbank, 0, 1)
+        
+        fbank = (fbank - norm_mean) / (norm_std + 1e-5)
+
+            # the output fbank shape is [time_frame_num, frequency_bins], e.g., [1024, 128]
+        return fbank.unsqueeze(0)
+
 
 
 

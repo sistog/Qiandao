@@ -14,11 +14,11 @@ EVAL_JSON="/data/zcx/wav_prj/Qiandao/src/datafiles/uuv_eval_data.json"
 LABEL_CSV="/data/zcx/wav_prj/Qiandao/src/datafiles/uuv_class_map.csv"
 MODEL_PATH=""  # 如果 mode=evaluate，需要填路径
 CLASSES=2
-BATCH_SIZE=32
-MODEL_NAME="ResNetAudio"
+BATCH_SIZE=16
+MODEL_NAME="ast"
 SR=52734
-TRANSFORM="mel"
-LR=0.001
+TRANSFORM="ast"
+LR=5e-5
 EPOCHS=20
 
 

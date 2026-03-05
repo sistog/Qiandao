@@ -14,7 +14,7 @@ from torch.nn import LayerNorm
 import torch.nn.functional as F
 import torchaudio.compliance.kaldi as ta_kaldi
 
-from BEATs.backbone import (
+from .backbone import (
     TransformerEncoder,
 )
 

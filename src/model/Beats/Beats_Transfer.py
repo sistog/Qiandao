@@ -46,7 +46,7 @@ class BEATsTransferLearningModel(pl.LightningModule):
             {
                 **self.checkpoint["cfg"],
                 "predictor_class": self.num_target_classes,
-                "finetuned_model": False,
+                # "finetuned_model": True,
             }
         )
 
@@ -63,7 +63,7 @@ class BEATsTransferLearningModel(pl.LightningModule):
     def _build_model(self):
         # 1. Load the pre-trained network
         self.beats = BEATs(self.cfg)
-        self.beats.load_state_dict(self.checkpoint["model"])
+        self.beats.load_state_dict(self.checkpoint["model"], strict=False)
 
         # 2. Classifier
         self.fc = nn.Linear(self.cfg.encoder_embed_dim, self.cfg.predictor_class)
@@ -77,6 +77,9 @@ class BEATsTransferLearningModel(pl.LightningModule):
 
     def forward(self, x, padding_mask=None):
         """Forward pass. Return x"""
+        x = x.squeeze(1)
+        # print("Input shape:", x.shape)
+        
 
         # Get the representation
         # with torch.no_grad():
@@ -102,59 +105,59 @@ class BEATsTransferLearningModel(pl.LightningModule):
 
         return x
 
-    def loss(self, lprobs, labels):
-        self.loss_func = nn.CrossEntropyLoss()
-        return self.loss_func(lprobs, labels)
+    # def loss(self, lprobs, labels):
+    #     self.loss_func = nn.CrossEntropyLoss()
+    #     return self.loss_func(lprobs, labels)
 
-    def training_step(self, batch, batch_idx):
-        # 1. Forward pass:
-        x, y_true = batch
-        padding_mask = None
-        y_probs = self.forward(x, padding_mask)
+    # def training_step(self, batch, batch_idx):
+    #     # 1. Forward pass:
+    #     x, y_true = batch
+    #     padding_mask = None
+    #     y_probs = self.forward(x, padding_mask)
 
-        # 2. Compute loss
-        train_loss = self.loss(y_probs, y_true)
+    #     # 2. Compute loss
+    #     train_loss = self.loss(y_probs, y_true)
 
-        # 3. Compute accuracy:
-        self.log("train_acc", self.train_acc(y_probs, y_true), prog_bar=True)
+    #     # 3. Compute accuracy:
+    #     self.log("train_acc", self.train_acc(y_probs, y_true), prog_bar=True)
 
-        return train_loss
+    #     return train_loss
 
-    def validation_step(self, batch, batch_idx):
-        # 1. Forward pass:
-        x, y_true = batch
-        y_probs = self.forward(x)
+    # def validation_step(self, batch, batch_idx):
+    #     # 1. Forward pass:
+    #     x, y_true = batch
+    #     y_probs = self.forward(x)
 
-        # 2. Compute loss
-        self.log("val_loss", self.loss(y_probs, y_true), prog_bar=True)
+    #     # 2. Compute loss
+    #     self.log("val_loss", self.loss(y_probs, y_true), prog_bar=True)
 
-        # 3. Compute accuracy:
-        self.log("val_acc", self.valid_acc(y_probs, y_true), prog_bar=True)
+    #     # 3. Compute accuracy:
+    #     self.log("val_acc", self.valid_acc(y_probs, y_true), prog_bar=True)
     
-    def test_step(self, batch, batch_idx):
-        # 1. Forward pass:
-        x, y_true = batch
-        y_probs = self.forward(x)
+    # def test_step(self, batch, batch_idx):
+    #     # 1. Forward pass:
+    #     x, y_true = batch
+    #     y_probs = self.forward(x)
 
-        loss = self.loss(y_probs, y_true)
-        self.log("test_loss", loss, prog_bar=True)
+    #     loss = self.loss(y_probs, y_true)
+    #     self.log("test_loss", loss, prog_bar=True)
 
-        acc = self.valid_acc(y_probs, y_true)
-        self.log("test_acc", acc, prog_bar=True)
+    #     acc = self.valid_acc(y_probs, y_true)
+    #     self.log("test_acc", acc, prog_bar=True)
 
-        return {"test_loss":loss, "test_acc":acc}
+    #     return {"test_loss":loss, "test_acc":acc}
 
-    def configure_optimizers(self):
-        if self.ft_entire_network:
-            optimizer = optim.AdamW(
-                [{"params": self.beats.parameters()}, {"params": self.fc.parameters()}],
-                lr=self.lr, betas=(0.9, 0.98), weight_decay=0.01
-            )  
-        else:
-            optimizer = optim.AdamW(
-                self.fc.parameters(),
-                lr=self.lr, betas=(0.9, 0.98), weight_decay=0.01
-            )  
+    # def configure_optimizers(self):
+    #     if self.ft_entire_network:
+    #         optimizer = optim.AdamW(
+    #             [{"params": self.beats.parameters()}, {"params": self.fc.parameters()}],
+    #             lr=self.lr, betas=(0.9, 0.98), weight_decay=0.01
+    #         )  
+    #     else:
+    #         optimizer = optim.AdamW(
+    #             self.fc.parameters(),
+    #             lr=self.lr, betas=(0.9, 0.98), weight_decay=0.01
+    #         )  
 
 
-        return optimizer
+    #     return optimizer

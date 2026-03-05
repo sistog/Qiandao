@@ -1,280 +1,303 @@
 # --------------------------------------------------------
-# BEATs: Audio Pre-Training with Acoustic Tokenizers (https://arxiv.org/abs/2212.09058)
-# Github source: https://github.com/microsoft/unilm/tree/master/beats
-# Copyright (c) 2022 Microsoft
+# WavLM: Large-Scale Self-Supervised  Pre-training  for Full Stack Speech Processing (https://arxiv.org/abs/2110.13900.pdf)
+# Github source: https://github.com/microsoft/unilm/tree/master/wavlm
+# Copyright (c) 2021 Microsoft
 # Licensed under The MIT License [see LICENSE for details]
 # Based on fairseq code bases
 # https://github.com/pytorch/fairseq
 # --------------------------------------------------------
 
 import math
-import numpy as np
+import warnings
 from typing import Dict, Optional, Tuple
 import torch
 from torch import Tensor, nn
+from torch.nn import Parameter
 import torch.nn.functional as F
-from torch.nn import LayerNorm, Parameter
-from .modules import (
-    GradMultiply,
-    SamePad,
-    get_activation_fn,
-    GLU_Linear,
-    quant_noise,
-)
 
 
-class TransformerEncoder(nn.Module):
-    def __init__(self, args):
+class TransposeLast(nn.Module):
+    def __init__(self, deconstruct_idx=None):
         super().__init__()
+        self.deconstruct_idx = deconstruct_idx
 
-        self.dropout = args.dropout
-        self.embedding_dim = args.encoder_embed_dim
+    def forward(self, x):
+        if self.deconstruct_idx is not None:
+            x = x[self.deconstruct_idx]
+        return x.transpose(-2, -1)
 
-        self.pos_conv = nn.Conv1d(
-            self.embedding_dim,
-            self.embedding_dim,
-            kernel_size=args.conv_pos,
-            padding=args.conv_pos // 2,
-            groups=args.conv_pos_groups,
+
+class Fp32LayerNorm(nn.LayerNorm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, input):
+        output = F.layer_norm(
+            input.float(),
+            self.normalized_shape,
+            self.weight.float() if self.weight is not None else None,
+            self.bias.float() if self.bias is not None else None,
+            self.eps,
         )
-        dropout = 0
-        std = math.sqrt((4 * (1.0 - dropout)) / (args.conv_pos * self.embedding_dim))
-        nn.init.normal_(self.pos_conv.weight, mean=0, std=std)
-        nn.init.constant_(self.pos_conv.bias, 0)
+        return output.type_as(input)
 
-        self.pos_conv = nn.utils.weight_norm(self.pos_conv, name="weight", dim=2)
-        self.pos_conv = nn.Sequential(self.pos_conv, SamePad(args.conv_pos), nn.GELU())
 
-        if hasattr(args, "relative_position_embedding"):
-            self.relative_position_embedding = args.relative_position_embedding
-            self.num_buckets = args.num_buckets
-            self.max_distance = args.max_distance
+class Fp32GroupNorm(nn.GroupNorm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def forward(self, input):
+        output = F.group_norm(
+            input.float(),
+            self.num_groups,
+            self.weight.float() if self.weight is not None else None,
+            self.bias.float() if self.bias is not None else None,
+            self.eps,
+        )
+        return output.type_as(input)
+
+
+class GradMultiply(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, scale):
+        ctx.scale = scale
+        res = x.new(x)
+        return res
+
+    @staticmethod
+    def backward(ctx, grad):
+        return grad * ctx.scale, None
+
+
+class SamePad(nn.Module):
+    def __init__(self, kernel_size, causal=False):
+        super().__init__()
+        if causal:
+            self.remove = kernel_size - 1
         else:
-            self.relative_position_embedding = False
-            self.num_buckets = 0
-            self.max_distance = 0
+            self.remove = 1 if kernel_size % 2 == 0 else 0
 
-        self.layers = nn.ModuleList(
-            [
-                TransformerSentenceEncoderLayer(
-                    embedding_dim=self.embedding_dim,
-                    ffn_embedding_dim=args.encoder_ffn_embed_dim,
-                    num_attention_heads=args.encoder_attention_heads,
-                    dropout=self.dropout,
-                    attention_dropout=args.attention_dropout,
-                    activation_dropout=args.activation_dropout,
-                    activation_fn=args.activation_fn,
-                    layer_norm_first=args.layer_norm_first,
-                    deep_norm=args.deep_norm,
-                    has_relative_attention_bias=self.relative_position_embedding,
-                    num_buckets=self.num_buckets,
-                    max_distance=self.max_distance,
-                    gru_rel_pos=args.gru_rel_pos,
-                    encoder_layers=args.encoder_layers,
+    def forward(self, x):
+        if self.remove > 0:
+            x = x[:, :, : -self.remove]
+        return x
+
+
+class Swish(nn.Module):
+    """Swish function
+    """
+
+    def __init__(self):
+        """Construct an MultiHeadedAttention object."""
+        super(Swish, self).__init__()
+        self.act = torch.nn.Sigmoid()
+
+    def forward(self, x):
+        return x * self.act(x)
+
+
+class GLU_Linear(nn.Module):
+    def __init__(self, input_dim, output_dim, glu_type="sigmoid", bias_in_glu=True):
+        super(GLU_Linear, self).__init__()
+
+        self.glu_type = glu_type
+        self.output_dim = output_dim
+
+        if glu_type == "sigmoid":
+            self.glu_act = torch.nn.Sigmoid()
+        elif glu_type == "swish":
+            self.glu_act = Swish()
+        elif glu_type == "relu":
+            self.glu_act = torch.nn.ReLU()
+        elif glu_type == "gelu":
+            self.glu_act = torch.nn.GELU()
+
+        if bias_in_glu:
+            self.linear = nn.Linear(input_dim, output_dim * 2, True)
+        else:
+            self.linear = nn.Linear(input_dim, output_dim * 2, False)
+
+    def forward(self, x):
+        # to be consistent with GLU_Linear, we assume the input always has the #channel (#dim) in the last dimension of the tensor, so need to switch the dimension first for 1D-Conv case
+        x = self.linear(x)
+
+        if self.glu_type == "bilinear":
+            x = (x[:, :, 0:self.output_dim] * x[:, :, self.output_dim:self.output_dim * 2])
+        else:
+            x = (x[:, :, 0:self.output_dim] * self.glu_act(x[:, :, self.output_dim:self.output_dim * 2]))
+
+        return x
+
+
+def gelu_accurate(x):
+    if not hasattr(gelu_accurate, "_a"):
+        gelu_accurate._a = math.sqrt(2 / math.pi)
+    return (
+        0.5 * x * (1 + torch.tanh(gelu_accurate._a * (x + 0.044715 * torch.pow(x, 3))))
+    )
+
+
+def gelu(x: torch.Tensor) -> torch.Tensor:
+    return torch.nn.functional.gelu(x.float()).type_as(x)
+
+
+def get_activation_fn(activation: str):
+    """Returns the activation function corresponding to `activation`"""
+
+    if activation == "relu":
+        return F.relu
+    elif activation == "gelu":
+        return gelu
+    elif activation == "gelu_fast":
+        warnings.warn(
+            "--activation-fn=gelu_fast has been renamed to gelu_accurate"
+        )
+        return gelu_accurate
+    elif activation == "gelu_accurate":
+        return gelu_accurate
+    elif activation == "tanh":
+        return torch.tanh
+    elif activation == "linear":
+        return lambda x: x
+    elif activation == "glu":
+        return lambda x: x
+    else:
+        raise RuntimeError("--activation-fn {} not supported".format(activation))
+
+
+def init_bert_params(module):
+    """
+    Initialize the weights specific to the BERT Model.
+    This overrides the default initializations depending on the specified arguments.
+        1. If normal_init_linear_weights is set then weights of linear
+           layer will be initialized using the normal distribution and
+           bais will be set to the specified value.
+        2. If normal_init_embed_weights is set then weights of embedding
+           layer will be initialized using the normal distribution.
+        3. If normal_init_proj_weights is set then weights of
+           in_project_weight for MultiHeadAttention initialized using
+           the normal distribution (to be validated).
+    """
+
+    def normal_(data):
+        # with FSDP, module params will be on CUDA, so we cast them back to CPU
+        # so that the RNG is consistent with and without FSDP
+        data.copy_(
+            data.cpu().normal_(mean=0.0, std=0.02).to(data.device)
+        )
+
+    if isinstance(module, nn.Linear):
+        normal_(module.weight.data)
+        if module.bias is not None:
+            module.bias.data.zero_()
+    if isinstance(module, nn.Embedding):
+        normal_(module.weight.data)
+        if module.padding_idx is not None:
+            module.weight.data[module.padding_idx].zero_()
+    if isinstance(module, MultiheadAttention):
+        normal_(module.q_proj.weight.data)
+        normal_(module.k_proj.weight.data)
+        normal_(module.v_proj.weight.data)
+
+
+def quant_noise(module, p, block_size):
+    """
+    Wraps modules and applies quantization noise to the weights for
+    subsequent quantization with Iterative Product Quantization as
+    described in "Training with Quantization Noise for Extreme Model Compression"
+
+    Args:
+        - module: nn.Module
+        - p: amount of Quantization Noise
+        - block_size: size of the blocks for subsequent quantization with iPQ
+
+    Remarks:
+        - Module weights must have the right sizes wrt the block size
+        - Only Linear, Embedding and Conv2d modules are supported for the moment
+        - For more detail on how to quantize by blocks with convolutional weights,
+          see "And the Bit Goes Down: Revisiting the Quantization of Neural Networks"
+        - We implement the simplest form of noise here as stated in the paper
+          which consists in randomly dropping blocks
+    """
+
+    # if no quantization noise, don't register hook
+    if p <= 0:
+        return module
+
+    # supported modules
+    assert isinstance(module, (nn.Linear, nn.Embedding, nn.Conv2d))
+
+    # test whether module.weight has the right sizes wrt block_size
+    is_conv = module.weight.ndim == 4
+
+    # 2D matrix
+    if not is_conv:
+        assert (
+            module.weight.size(1) % block_size == 0
+        ), "Input features must be a multiple of block sizes"
+
+    # 4D matrix
+    else:
+        # 1x1 convolutions
+        if module.kernel_size == (1, 1):
+            assert (
+                module.in_channels % block_size == 0
+            ), "Input channels must be a multiple of block sizes"
+        # regular convolutions
+        else:
+            k = module.kernel_size[0] * module.kernel_size[1]
+            assert k % block_size == 0, "Kernel size must be a multiple of block size"
+
+    def _forward_pre_hook(mod, input):
+        # no noise for evaluation
+        if mod.training:
+            if not is_conv:
+                # gather weight and sizes
+                weight = mod.weight
+                in_features = weight.size(1)
+                out_features = weight.size(0)
+
+                # split weight matrix into blocks and randomly drop selected blocks
+                mask = torch.zeros(
+                    in_features // block_size * out_features, device=weight.device
                 )
-                for i in range(args.encoder_layers)
-            ]
-        )
-        if self.relative_position_embedding:
-            for i in range(1, args.encoder_layers):
-                del self.layers[i].self_attn.relative_attention_bias
-                self.layers[i].self_attn.relative_attention_bias = self.layers[0].self_attn.relative_attention_bias
+                mask.bernoulli_(p)
+                mask = mask.repeat_interleave(block_size, -1).view(-1, in_features)
 
-        self.layer_norm_first = args.layer_norm_first
-        self.layer_norm = LayerNorm(self.embedding_dim)
-        self.layerdrop = args.encoder_layerdrop
-
-        self.apply(init_bert_params)
-
-        if args.deep_norm:
-            deep_norm_beta = math.pow(8 * args.encoder_layers, -1 / 4)
-            for i in range(args.encoder_layers):
-                nn.init.xavier_normal_(self.layers[i].self_attn.k_proj.weight, gain=1)
-                nn.init.xavier_normal_(self.layers[i].self_attn.v_proj.weight, gain=deep_norm_beta)
-                nn.init.xavier_normal_(self.layers[i].self_attn.q_proj.weight, gain=1)
-                nn.init.xavier_normal_(self.layers[i].self_attn.out_proj.weight, gain=deep_norm_beta)
-                nn.init.xavier_normal_(self.layers[i].fc1.weight, gain=deep_norm_beta)
-                nn.init.xavier_normal_(self.layers[i].fc2.weight, gain=deep_norm_beta)
-
-        self.layer_wise_gradient_decay_ratio = getattr(args, "layer_wise_gradient_decay_ratio", 1)
-
-    def forward(self, x, padding_mask=None, layer=None):
-        x, layer_results = self.extract_features(x, padding_mask, layer)
-
-        if self.layer_norm_first and layer is None:
-            x = self.layer_norm(x)
-
-        return x, layer_results
-
-    def extract_features(self, x, padding_mask=None, tgt_layer=None):
-
-        if padding_mask is not None:
-            x[padding_mask] = 0
-
-        x_conv = self.pos_conv(x.transpose(1, 2))
-        x_conv = x_conv.transpose(1, 2)
-        # x += x_conv
-        # Avoid the inplace operation which messes up the gradients
-        x = x.clone() + x_conv
-
-        if not self.layer_norm_first:
-            x = self.layer_norm(x)
-
-        x = F.dropout(x, p=self.dropout, training=self.training)
-
-        # B x T x C -> T x B x C
-        x = x.transpose(0, 1)
-
-        layer_results = []
-        z = None
-        if tgt_layer is not None:
-            layer_results.append((x, z))
-        r = None
-        pos_bias = None
-        for i, layer in enumerate(self.layers):
-            if self.layer_wise_gradient_decay_ratio != 1.0:
-                x = GradMultiply.apply(x, self.layer_wise_gradient_decay_ratio)
-            dropout_probability = np.random.random()
-            if not self.training or (dropout_probability > self.layerdrop):
-                x, z, pos_bias = layer(x, self_attn_padding_mask=padding_mask, need_weights=False, pos_bias=pos_bias)
-            if tgt_layer is not None:
-                layer_results.append((x, z))
-            if i == tgt_layer:
-                r = x
-                break
-
-        if r is not None:
-            x = r
-
-        # T x B x C -> B x T x C
-        x = x.transpose(0, 1)
-
-        return x, layer_results
-
-
-class TransformerSentenceEncoderLayer(nn.Module):
-    def __init__(
-            self,
-            embedding_dim: float = 768,
-            ffn_embedding_dim: float = 3072,
-            num_attention_heads: float = 8,
-            dropout: float = 0.1,
-            attention_dropout: float = 0.1,
-            activation_dropout: float = 0.1,
-            activation_fn: str = "relu",
-            layer_norm_first: bool = False,
-            deep_norm: bool = False,
-            has_relative_attention_bias: bool = False,
-            num_buckets: int = 0,
-            max_distance: int = 0,
-            rescale_init: bool = False,
-            gru_rel_pos: bool = False,
-            encoder_layers: int = 0,
-    ) -> None:
-
-        super().__init__()
-        self.embedding_dim = embedding_dim
-        self.dropout = dropout
-        self.activation_dropout = activation_dropout
-
-        self.activation_name = activation_fn
-        self.activation_fn = get_activation_fn(activation_fn)
-        self.self_attn = MultiheadAttention(
-            self.embedding_dim,
-            num_attention_heads,
-            dropout=attention_dropout,
-            self_attention=True,
-            has_relative_attention_bias=has_relative_attention_bias,
-            num_buckets=num_buckets,
-            max_distance=max_distance,
-            rescale_init=rescale_init,
-            gru_rel_pos=gru_rel_pos,
-        )
-
-        self.dropout1 = nn.Dropout(dropout)
-        self.dropout2 = nn.Dropout(self.activation_dropout)
-        self.dropout3 = nn.Dropout(dropout)
-
-        self.layer_norm_first = layer_norm_first
-
-        self.self_attn_layer_norm = LayerNorm(self.embedding_dim)
-
-        if self.activation_name == "glu":
-            self.fc1 = GLU_Linear(self.embedding_dim, ffn_embedding_dim, "swish")
-        else:
-            self.fc1 = nn.Linear(self.embedding_dim, ffn_embedding_dim)
-        self.fc2 = nn.Linear(ffn_embedding_dim, self.embedding_dim)
-
-        self.final_layer_norm = LayerNorm(self.embedding_dim)
-
-        self.deep_norm = deep_norm
-        if self.deep_norm:
-            self.deep_norm_alpha = math.pow(2 * encoder_layers, 1 / 4)
-        else:
-            self.deep_norm_alpha = 1
-
-    def forward(
-            self,
-            x: torch.Tensor,
-            self_attn_mask: torch.Tensor = None,
-            self_attn_padding_mask: torch.Tensor = None,
-            need_weights: bool = False,
-            pos_bias=None
-    ):
-        residual = x
-
-        if self.layer_norm_first:
-            x = self.self_attn_layer_norm(x)
-            x, attn, pos_bias = self.self_attn(
-                query=x,
-                key=x,
-                value=x,
-                key_padding_mask=self_attn_padding_mask,
-                need_weights=False,
-                attn_mask=self_attn_mask,
-                position_bias=pos_bias
-            )
-            x = self.dropout1(x)
-            x = residual + x
-
-            residual = x
-            x = self.final_layer_norm(x)
-            if self.activation_name == "glu":
-                x = self.fc1(x)
             else:
-                x = self.activation_fn(self.fc1(x))
-            x = self.dropout2(x)
-            x = self.fc2(x)
-            x = self.dropout3(x)
-            x = residual + x
-        else:
-            x, attn, pos_bias = self.self_attn(
-                query=x,
-                key=x,
-                value=x,
-                key_padding_mask=self_attn_padding_mask,
-                need_weights=need_weights,
-                attn_mask=self_attn_mask,
-                position_bias=pos_bias
-            )
+                # gather weight and sizes
+                weight = mod.weight
+                in_channels = mod.in_channels
+                out_channels = mod.out_channels
 
-            x = self.dropout1(x)
-            x = residual * self.deep_norm_alpha + x
+                # split weight matrix into blocks and randomly drop selected blocks
+                if mod.kernel_size == (1, 1):
+                    mask = torch.zeros(
+                        int(in_channels // block_size * out_channels),
+                        device=weight.device,
+                    )
+                    mask.bernoulli_(p)
+                    mask = mask.repeat_interleave(block_size, -1).view(-1, in_channels)
+                else:
+                    mask = torch.zeros(
+                        weight.size(0), weight.size(1), device=weight.device
+                    )
+                    mask.bernoulli_(p)
+                    mask = (
+                        mask.unsqueeze(2)
+                        .unsqueeze(3)
+                        .repeat(1, 1, mod.kernel_size[0], mod.kernel_size[1])
+                    )
 
-            x = self.self_attn_layer_norm(x)
+            # scale weights and apply mask
+            mask = mask.to(
+                torch.bool
+            )  # x.bool() is not currently supported in TorchScript
+            s = 1 / (1 - p)
+            mod.weight.data = s * weight.masked_fill(mask, 0)
 
-            residual = x
-            if self.activation_name == "glu":
-                x = self.fc1(x)
-            else:
-                x = self.activation_fn(self.fc1(x))
-            x = self.dropout2(x)
-            x = self.fc2(x)
-            x = self.dropout3(x)
-            x = residual * self.deep_norm_alpha + x
-            x = self.final_layer_norm(x)
-
-        return x, attn, pos_bias
+    module.register_forward_pre_hook(_forward_pre_hook)
+    return module
 
 
 class MultiheadAttention(nn.Module):
@@ -482,6 +505,64 @@ class MultiheadAttention(nn.Module):
             position_bias = self.compute_bias(tgt_len, src_len)
             position_bias = position_bias.unsqueeze(0).repeat(bsz, 1, 1, 1).view(bsz * self.num_heads, tgt_len, src_len)
 
+        if (
+                not is_tpu  # don't use PyTorch version on TPUs
+                and incremental_state is None
+                and not static_kv
+                # A workaround for quantization to work. Otherwise JIT compilation
+                # treats bias in linear module as method.
+                and not torch.jit.is_scripting()
+                and self.q_head_dim == self.head_dim
+        ):
+            assert key is not None and value is not None
+            assert attn_mask is None
+
+            attn_mask_rel_pos = None
+            if position_bias is not None:
+                attn_mask_rel_pos = position_bias
+                if self.gru_rel_pos:
+                    query_layer = query.transpose(0, 1)
+                    new_x_shape = query_layer.size()[:-1] + (self.num_heads, -1)
+                    query_layer = query_layer.view(*new_x_shape)
+                    query_layer = query_layer.permute(0, 2, 1, 3)
+                    _B, _H, _L, __ = query_layer.size()
+
+                    gate_a, gate_b = torch.sigmoid(self.grep_linear(query_layer).view(
+                        _B, _H, _L, 2, 4).sum(-1, keepdim=False)).chunk(2, dim=-1)
+                    gate_a_1 = gate_a * (gate_b * self.grep_a - 1.0) + 2.0
+                    attn_mask_rel_pos = gate_a_1.view(bsz * self.num_heads, -1, 1) * position_bias
+
+                attn_mask_rel_pos = attn_mask_rel_pos.view((-1, tgt_len, tgt_len))
+            k_proj_bias = self.k_proj.bias
+            if k_proj_bias is None:
+                k_proj_bias = torch.zeros_like(self.q_proj.bias)
+
+            x, attn = F.multi_head_attention_forward(
+                query,
+                key,
+                value,
+                self.embed_dim,
+                self.num_heads,
+                torch.empty([0]),
+                torch.cat((self.q_proj.bias, self.k_proj.bias, self.v_proj.bias)),
+                self.bias_k,
+                self.bias_v,
+                self.add_zero_attn,
+                self.dropout_module.p,
+                self.out_proj.weight,
+                self.out_proj.bias,
+                self.training,
+                # self.training or self.dropout_module.apply_during_inference,
+                key_padding_mask,
+                need_weights,
+                attn_mask_rel_pos,
+                use_separate_proj_weight=True,
+                q_proj_weight=self.q_proj.weight,
+                k_proj_weight=self.k_proj.weight,
+                v_proj_weight=self.v_proj.weight,
+            )
+            return x, attn, position_bias
+
         if incremental_state is not None:
             saved_state = self._get_input_buffer(incremental_state)
             if saved_state is not None and "prev_key" in saved_state:
@@ -513,8 +594,6 @@ class MultiheadAttention(nn.Module):
             k = self.k_proj(key)
             v = self.v_proj(value)
         q *= self.scaling
-        alpha = 32
-        q *= 1 / alpha
 
         if self.bias_k is not None:
             assert self.bias_v is not None
@@ -623,7 +702,6 @@ class MultiheadAttention(nn.Module):
                 )
 
         attn_weights = torch.bmm(q, k.transpose(1, 2))
-        attn_weights = (attn_weights - attn_weights.max(dim=-1, keepdim=True)[0]) * alpha
         attn_weights = self.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
 
         assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]
@@ -650,18 +728,17 @@ class MultiheadAttention(nn.Module):
             return attn_weights, v, position_bias
 
         if position_bias is not None:
-            attn_mask_rel_pos = position_bias
             if self.gru_rel_pos == 1:
-                query_layer = q.view(bsz, self.num_heads, tgt_len, self.q_head_dim) * alpha / self.scaling
+                query_layer = q.view(bsz, self.num_heads, tgt_len, self.q_head_dim)
                 _B, _H, _L, __ = query_layer.size()
                 gate_a, gate_b = torch.sigmoid(self.grep_linear(query_layer).view(
                     _B, _H, _L, 2, 4).sum(-1, keepdim=False)).chunk(2, dim=-1)
                 gate_a_1 = gate_a * (gate_b * self.grep_a - 1.0) + 2.0
-                attn_mask_rel_pos = gate_a_1.view(bsz * self.num_heads, tgt_len, 1) * position_bias
+                position_bias = gate_a_1.view(bsz * self.num_heads, -1, 1) * position_bias
 
-            attn_mask_rel_pos = attn_mask_rel_pos.view(attn_weights.size())
+            position_bias = position_bias.view(attn_weights.size())
 
-            attn_weights = attn_weights + attn_mask_rel_pos
+            attn_weights = attn_weights + position_bias
 
         attn_weights_float = F.softmax(
             attn_weights, dim=-1
@@ -748,38 +825,3 @@ class MultiheadAttention(nn.Module):
 
     def apply_sparse_mask(self, attn_weights, tgt_len: int, src_len: int, bsz: int):
         return attn_weights
-
-
-def init_bert_params(module):
-    """
-    Initialize the weights specific to the BERT Model.
-    This overrides the default initializations depending on the specified arguments.
-        1. If normal_init_linear_weights is set then weights of linear
-           layer will be initialized using the normal distribution and
-           bais will be set to the specified value.
-        2. If normal_init_embed_weights is set then weights of embedding
-           layer will be initialized using the normal distribution.
-        3. If normal_init_proj_weights is set then weights of
-           in_project_weight for MultiHeadAttention initialized using
-           the normal distribution (to be validated).
-    """
-
-    def normal_(data):
-        # with FSDP, module params will be on CUDA, so we cast them back to CPU
-        # so that the RNG is consistent with and without FSDP
-        data.copy_(
-            data.cpu().normal_(mean=0.0, std=0.02).to(data.device)
-        )
-
-    if isinstance(module, nn.Linear):
-        normal_(module.weight.data)
-        if module.bias is not None:
-            module.bias.data.zero_()
-    if isinstance(module, nn.Embedding):
-        normal_(module.weight.data)
-        if module.padding_idx is not None:
-            module.weight.data[module.padding_idx].zero_()
-    if isinstance(module, MultiheadAttention):
-        normal_(module.q_proj.weight.data)
-        normal_(module.k_proj.weight.data)
-        normal_(module.v_proj.weight.data)

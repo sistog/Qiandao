@@ -139,6 +139,8 @@ class AudioDataset(Dataset):
              # the output fbank shape is [time_frame_num, frequency_bins], e.g., [1024, 128]
             return fbank, torch.tensor(label, dtype=torch.long)
         elif self.transform == 'raw':
+            # orig_freq = sr
+            # waveform = torchaudio.functional.resample(waveform, orig_freq, 16000)
             return waveform, torch.tensor(label, dtype=torch.long)
 
 

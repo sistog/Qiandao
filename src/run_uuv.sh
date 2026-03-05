@@ -14,12 +14,13 @@ EVAL_JSON="/data/zcx/wav_prj/Qiandao/src/datafiles/uuv_eval_data.json"
 LABEL_CSV="/data/zcx/wav_prj/Qiandao/src/datafiles/uuv_class_map.csv"
 MODEL_PATH=""  # 如果 mode=evaluate，需要填路径
 CLASSES=2
-BATCH_SIZE=16
-MODEL_NAME="ast"
+BATCH_SIZE=4
+MODEL_NAME="Beats"
 SR=52734
-TRANSFORM="ast"
+TRANSFORM="raw"
 LR=5e-5
 EPOCHS=20
+FT_ENTIRE_NETWORK=False
 
 
 
@@ -39,4 +40,5 @@ python3 "${PYTHON_SCRIPT}" \
   --sr "${SR}"\
   --transform "${TRANSFORM}"\
   --lr "${LR}"\
-  --num_epochs "${EPOCHS}"
+  --num_epochs "${EPOCHS}"\
+  --ft_entire_network FT_ENTIRE_NETWORK

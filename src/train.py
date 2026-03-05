@@ -13,10 +13,12 @@ from model.LSTM_NET import AudioLSTM
 from model.ResNet import ResNetAudio
 from model.ViT_model import AcousticViT
 from model.ast_models import ASTModel
+from model.Beats.Beats_Transfer import BEATsTransferLearningModel
+from model.WavLm.WavLM_Classfier import WavLMClassifier
 from dataset.qiandao_dataset import AudioDataset
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from torch.utils.tensorboard import SummaryWriter
-from model.Beats.Beats_Transfer import BEATsTransferLearningModel
+
 
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, global_step, writer):
@@ -34,6 +36,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, global_step
         y = y.to(device)
 
         optimizer.zero_grad()
+
+        # print("x.shape:", x.shape)
 
         logits = model(x)
         loss = criterion(logits, y)
@@ -75,6 +79,7 @@ def validate(model, dataloader, criterion, device):
         for x, y in pbar:
             x = x.to(device)
             y = y.to(device)
+            
 
             logits = model(x)
             loss = criterion(logits, y)
@@ -164,6 +169,7 @@ def parse_args():
     parser.add_argument('--sr', type=int, default=52734, help='Sample rate')
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--num_epochs', type=int, default=20, help='Number of training epochs')
+    parser.add_argument('--ft_entire_network', type=bool, default=False, help='Whether to fine-tune the entire network')
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -196,10 +202,12 @@ if __name__ == "__main__":
         audioset_pretrain=True,
         model_size='base384'
         ).to(device)
+    elif model_name.lower() == 'wavlm':
+        model = WavLMClassifier(num_classes=args.classes).to(device)
     elif model_name.lower() == 'beats':
         model = BEATsTransferLearningModel(
-            num_target_classes=4,
-            ft_entire_network=False
+            num_target_classes=args.classes,
+            ft_entire_network=args.ft_entire_network
         )
 
         model.to(device)

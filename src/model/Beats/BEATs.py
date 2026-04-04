@@ -41,10 +41,10 @@ class BEATsConfig:
         self.deep_norm: bool = False  # apply deep_norm first in the transformer
 
         # dropouts
-        self.dropout: float = 0.1  # dropout probability for the transformer
-        self.attention_dropout: float = 0.1  # dropout probability for attention weights
-        self.activation_dropout: float = 0.0  # dropout probability after activation in FFN
-        self.encoder_layerdrop: float = 0.0  # probability of dropping a tarnsformer layer
+        self.dropout: float = 0.2  # dropout probability for the transformer
+        self.attention_dropout: float = 0.2  # dropout probability for attention weights
+        self.activation_dropout: float = 0.1  # dropout probability after activation in FFN
+        self.encoder_layerdrop: float = 0.05  # probability of dropping a tarnsformer layer
         self.dropout_input: float = 0.0  # dropout to apply to the input (after feat extr)
 
         # positional embeddings

@@ -16,7 +16,7 @@ from model.ast_models import ASTModel
 from model.Beats.Beats_Transfer import BEATsTransferLearningModel
 from model.WavLm.WavLM_Classfier import WavLMClassifier
 from dataset.qiandao_dataset import AudioDataset
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, cohen_kappa_score
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -73,13 +73,16 @@ def validate(model, dataloader, criterion, device):
     correct = 0
     total = 0
 
+    # 类别正确预测数和样本数
+    correct_per_class = [0] * 4  # 假设有4个类别，具体数量根据你的模型调整
+    total_per_class = [0] * 4   # 假设有4个类别，具体数量根据你的模型调整
+
     pbar = tqdm(dataloader, desc="Val", leave=False)
 
     with torch.no_grad():   # ⭐ 非常重要
         for x, y in pbar:
             x = x.to(device)
             y = y.to(device)
-            
 
             logits = model(x)
             loss = criterion(logits, y)
@@ -90,6 +93,11 @@ def validate(model, dataloader, criterion, device):
             correct += (preds == y).sum().item()
             total += x.size(0)
 
+            # 计算每个类别的正确预测数
+            for i in range(len(y)):
+                correct_per_class[y[i].item()] += (preds[i] == y[i]).item()
+                total_per_class[y[i].item()] += 1
+
             # 实时显示
             pbar.set_postfix(
                 loss=f"{loss.item():.4f}",
@@ -98,7 +106,13 @@ def validate(model, dataloader, criterion, device):
 
     avg_loss = total_loss / total
     accuracy = correct / total
-    return avg_loss, accuracy
+
+    # 计算AA
+    aa = sum([correct_per_class[i] / total_per_class[i] if total_per_class[i] > 0 else 0 for i in range(len(correct_per_class))]) / len(correct_per_class)
+    print(f"Per-class Accuracy: {[correct_per_class[i] / total_per_class[i] if total_per_class[i] > 0 else 0 for i in range(len(correct_per_class))]}")
+    print(f"Average Accuracy (AA): {aa:.4f}")
+    print(f"Validation Loss: {avg_loss:.4f}, Validation Accuracy: {accuracy:.4f}, Validation AA: {aa:.4f}")
+    return avg_loss, accuracy, aa
 
 @torch.no_grad()
 def evalute(model, dataloader, device, class_names=None, save_path=None):
@@ -106,8 +120,9 @@ def evalute(model, dataloader, device, class_names=None, save_path=None):
 
     all_preds = []
     all_labels = []
+    pbar = tqdm(dataloader, desc="Evaluating", leave=False)
 
-    for x, y in dataloader:
+    for x, y in pbar:
         x = x.to(device)
         y = y.to(device)
 
@@ -117,12 +132,13 @@ def evalute(model, dataloader, device, class_names=None, save_path=None):
         all_preds.extend(preds.cpu().numpy())
         all_labels.extend(y.cpu().numpy())
     accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds)
+    precision = precision_score(all_labels, all_preds, average='macro')
     recall = recall_score(all_labels, all_preds, average='macro')
     f1 = f1_score(all_labels, all_preds, average='macro')
+    kappa = cohen_kappa_score(all_labels, all_preds)
 
     print("Evaluation Results:")
-    print(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}")
+    print(f"Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}, F1 Score: {f1:.4f}, Cohen's Kappa: {kappa:.4f}")
 
     # ===== 混淆矩阵 =====
     cm = confusion_matrix(all_labels, all_preds)
@@ -170,6 +186,12 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
     parser.add_argument('--num_epochs', type=int, default=20, help='Number of training epochs')
     parser.add_argument('--ft_entire_network', type=bool, default=False, help='Whether to fine-tune the entire network')
+    parser.add_argument('--freeze_backbone', action='store_true', help='Freeze WavLM backbone during training')
+    parser.add_argument('--pool_mode', type=str, default='mean', choices=['mean','max','attention'], help='Pooling mode for WavLM classifier')
+    parser.add_argument('--attention_hidden', type=int, default=128, help='Hidden dim for attention pooling (if used)')
+    parser.add_argument('--pool_dropout', type=float, default=0.1, help='Dropout applied before classifier pooling')
+    parser.add_argument('--ration', type=float, default=0.0, help='Ratio for data splitting')
+
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -203,7 +225,13 @@ if __name__ == "__main__":
         model_size='base384'
         ).to(device)
     elif model_name.lower() == 'wavlm':
-        model = WavLMClassifier(num_classes=args.classes).to(device)
+        model = WavLMClassifier(
+            num_classes=args.classes,
+            freeze_backbone=args.freeze_backbone,
+            pool_mode=args.pool_mode,
+            attention_hidden=args.attention_hidden,
+            dropout=args.pool_dropout,
+        ).to(device)
     elif model_name.lower() == 'beats':
         model = BEATsTransferLearningModel(
             num_target_classes=args.classes,
@@ -230,25 +258,32 @@ if __name__ == "__main__":
     )
     
     if model_name.lower() != 'beats':
-        optimizer = torch.optim.Adam(model.parameters(), 
-                                    lr=lr,
-                                    weight_decay=1e-5
-                                    )
+        params = filter(lambda p: p.requires_grad, model.parameters())
+        optimizer = torch.optim.Adam(params,
+                                     lr=lr,
+                                     weight_decay=1e-5
+                                     )
+    
+    # 添加学习率调度器
+    from torch.optim.lr_scheduler import CosineAnnealingLR
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=lr * 0.1)
+    
     criterion = nn.CrossEntropyLoss()
-    print("使用的模型为：", model_name)
+    print("使用的模型为：", model_name, "数据集分割比例为：", args.ration)
     if args.mode == 'evaluate':
         val_data_path = args.eval_data_json
         label_csv_path = args.label_csv
         test_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-        model_path = '/data/zcx/wav_prj/Qiandao/src/exp/ckpt/audiocnn1d_20260120-122121.pth'  # 修改为实际模型路径
+        model_path = args.model_path  # 修改为实际模型路径
+        print(f"Loading model from {model_path} for evaluation...")
         
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         if args.classes == 4:
-            class_names = ['Cargo', 'Fishing', 'Passenger', 'Other']
+            class_names = ['Cargo', 'Passengership', 'Tanker', 'Tug']
         else:
             class_names = None
-        evalute(model, test_loader, device, class_names=class_names, save_path=f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/confusion_matrix.png")
+        evalute(model, test_loader, device, class_names=class_names, save_path=f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/{model_name}_confusion_matrix.png")
         exit(0)
     else:
 
@@ -256,17 +291,23 @@ if __name__ == "__main__":
         val_data_path = args.eval_data_json
         label_csv_path = args.label_csv
 
-        train_dataset = AudioDataset(dataset_json_file=train_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr)
-        val_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr)
+        train_dataset = AudioDataset(dataset_json_file=train_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=True)
+        val_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=False)
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
         num_epochs = args.num_epochs
         timestamp = time.strftime("%Y%m%d-%H%M%S")
-        log_file = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs/{model_name}_log_{timestamp}.txt"
-        os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs", exist_ok=True)
-        os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt", exist_ok=True)
-        writer = SummaryWriter(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/tensorboard/{model_name}_{timestamp}")
+        if args.ration > 0.0:
+            log_file = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/logs/{model_name}_log_{timestamp}.txt"
+            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/logs", exist_ok=True)
+            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/ckpt", exist_ok=True)
+            writer = SummaryWriter(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/tensorboard/{model_name}_{timestamp}")
+        else:
+            log_file = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs/{model_name}_log_{timestamp}.txt"
+            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs", exist_ok=True)
+            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt", exist_ok=True)
+            writer = SummaryWriter(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/tensorboard/{model_name}_{timestamp}")
         global_step = 0
         best_acc = 0.0
         args_dict = vars(args)
@@ -279,19 +320,34 @@ if __name__ == "__main__":
             f.write("\n" + "="*60 + "\n\n")
         for epoch in range(num_epochs):
             train_loss, train_acc, global_step = train_one_epoch(model, train_loader, criterion, optimizer, device, global_step, writer)
-            val_loss, val_acc = validate(model, val_loader, criterion, device)
+            val_loss, val_acc, val_aa = validate(model, val_loader, criterion, device)
             log_str = (f"Epoch [{epoch+1}/{num_epochs}] "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
-                f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}")
+                f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val AA: {val_aa:.4f}")
             writer.add_scalar('Loss/val', val_loss, epoch)
             writer.add_scalar('Accuracy/val', val_acc, epoch)
+            writer.add_scalar('AA/val', val_aa, epoch)
+            
+            # 学习率调度器步进
+            scheduler.step()
+            current_lr = optimizer.param_groups[0]['lr']
+            writer.add_scalar('Learning Rate', current_lr, epoch)
+            
             print(log_str)
             with open(log_file, "a") as f:
                 f.write(log_str + "\n")
-            save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_best.pth"
+            if args.ration > 0.0:
+                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/ckpt/{model_name}_best.pth"
+            else:
+                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_best.pth"
             if val_acc > best_acc:
                 best_acc = val_acc
                 torch.save(model.state_dict(), save_path)
+            if args.ration > 0.0:
+                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/ckpt/{model_name}_AA{val_aa:.4f}.pth"
+            else:
+                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_AA{val_aa:.4f}.pth"
+            # torch.save(model.state_dict(), save_path)
         writer.close()
         save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_{timestamp}.pth"
         torch.save(model.state_dict(), save_path)

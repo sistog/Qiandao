@@ -38,7 +38,7 @@ def make_index_dict(label_csv):
             line_count += 1
     return index_lookup
 
-class AudioDataset(Dataset):
+class AudioDataset2(Dataset):
     def __init__(self, dataset_json_file, label_csv_file, n_fft=8192, transform=None, sr=52734, ration=0.0, train=True):
         dataset_file = dataset_json_file
         if ration > 0.0:
@@ -53,7 +53,6 @@ class AudioDataset(Dataset):
         self.n_fft = n_fft
         self.sr = sr
         self.transform = transform
-        self.train = train
 
         if self.transform == "mel":
             self.mel_spec_transform = torchaudio.transforms.MelSpectrogram(
@@ -174,19 +173,6 @@ class AudioDataset(Dataset):
             # ensure mono
             if waveform.size(0) > 1:
                 waveform = waveform.mean(dim=0, keepdim=True)
-            
-            # 数据增强（仅在训练时应用）
-            if self.train:
-                # 随机音量变化
-                if torch.rand(1) < 0.5:
-                    volume_factor = torch.rand(1) * 0.4 + 0.8  # 0.8-1.2
-                    waveform = waveform * volume_factor
-                
-                # 随机添加噪声
-                if torch.rand(1) < 0.2:
-                    noise = torch.randn_like(waveform) * 0.01
-                    waveform = waveform + noise
-            
             return waveform, torch.tensor(label, dtype=torch.long)
           
 

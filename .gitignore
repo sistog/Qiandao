@@ -3,3 +3,9 @@ src/exp/
 *.pt
 *.ckpt
 *.pyc
+*.wav
+*.json
+__pycache__/
+logs/
+results/
+*.txt

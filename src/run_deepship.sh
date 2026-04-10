@@ -18,6 +18,7 @@ LABEL_CSV="/data/zcx/wav_prj/Qiandao/src/datafiles/deepship_class_map.csv"
 MODEL_PATH="/data/zcx/wav_prj/Qiandao/src/exp/Deepship/ckpt/Beats_best.pth"  # 如果 mode=evaluate，需要填路径
 CLASSES=4
 BATCH_SIZE=16
+NUM_WORKERS=4
 MODEL_NAME="beats"
 SR=32000
 TRANSFORM="raw"
@@ -64,4 +65,5 @@ python3 "${PYTHON_SCRIPT}" \
   --lr "${LR}"\
   --num_epochs "${EPOCHS}"\
   --ft_entire_network FT_ENTIRE_NETWORK\
-  --ration "${RATION}"
+  --ration "${RATION}"\
+  --num_workers "${NUM_WORKERS}"

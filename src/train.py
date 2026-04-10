@@ -11,8 +11,9 @@ from model.CNN1D_NET import AudioCNN1D
 from model.CNN2D_NET import AudioCNN2D
 from model.LSTM_NET import AudioLSTM
 from model.ResNet import ResNetAudio
-from model.ViT_model import AcousticViT
+from model.ViT_model import SimpleViT
 from model.ast_models import ASTModel
+from model.caf_model import CAF_ViT
 from model.Beats.Beats_Transfer import BEATsTransferLearningModel
 from model.WavLm.WavLM_Classfier import WavLMClassifier
 from dataset.qiandao_dataset import AudioDataset
@@ -191,6 +192,7 @@ def parse_args():
     parser.add_argument('--attention_hidden', type=int, default=128, help='Hidden dim for attention pooling (if used)')
     parser.add_argument('--pool_dropout', type=float, default=0.1, help='Dropout applied before classifier pooling')
     parser.add_argument('--ration', type=float, default=0.0, help='Ratio for data splitting')
+    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers for DataLoader')
 
     return parser.parse_args()
 
@@ -213,6 +215,14 @@ if __name__ == "__main__":
         model = AudioLSTM(num_classes=args.classes).to(device)
     elif model_name.lower() == 'resnetaudio':
         model = ResNetAudio(num_classes=args.classes).to(device)
+    elif model_name.lower() == 'vit':
+        model = SimpleViT(img_size=(128, 256), num_classes=args.classes).to(device)
+    elif model_name.lower() == 'caf':
+        model = CAF_ViT(
+                    dim_a=128, 
+                    dim_b=256, 
+                    num_classes=args.classes
+                ).to(device)
     elif model_name.lower() == 'ast':
         model = ASTModel(
         label_dim=4,
@@ -273,8 +283,8 @@ if __name__ == "__main__":
     if args.mode == 'evaluate':
         val_data_path = args.eval_data_json
         label_csv_path = args.label_csv
-        test_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        test_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=False)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=args.num_workers, shuffle=False)
         model_path = args.model_path  # 修改为实际模型路径
         print(f"Loading model from {model_path} for evaluation...")
         
@@ -294,15 +304,15 @@ if __name__ == "__main__":
         train_dataset = AudioDataset(dataset_json_file=train_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=True)
         val_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=False)
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, num_workers=args.num_workers, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=args.num_workers, shuffle=False)
         num_epochs = args.num_epochs
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         if args.ration > 0.0:
-            log_file = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/logs/{model_name}_log_{timestamp}.txt"
-            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/logs", exist_ok=True)
-            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/ckpt", exist_ok=True)
-            writer = SummaryWriter(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/tensorboard/{model_name}_{timestamp}")
+            log_file = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/logs/{model_name}_log_{timestamp}.txt"
+            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/logs", exist_ok=True)
+            os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/ckpt", exist_ok=True)
+            writer = SummaryWriter(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/tensorboard/{model_name}_{timestamp}")
         else:
             log_file = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs/{model_name}_log_{timestamp}.txt"
             os.makedirs(f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/logs", exist_ok=True)
@@ -337,18 +347,21 @@ if __name__ == "__main__":
             with open(log_file, "a") as f:
                 f.write(log_str + "\n")
             if args.ration > 0.0:
-                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/ckpt/{model_name}_best.pth"
+                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/ckpt/{model_name}_best.pth"
             else:
                 save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_best.pth"
             if val_acc > best_acc:
                 best_acc = val_acc
                 torch.save(model.state_dict(), save_path)
             if args.ration > 0.0:
-                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration}/ckpt/{model_name}_AA{val_aa:.4f}.pth"
+                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/ckpt/{model_name}_acc{val_acc:.4f}.pth"
             else:
-                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_AA{val_aa:.4f}.pth"
-            # torch.save(model.state_dict(), save_path)
+                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_acc{val_acc:.4f}.pth"
+            if val_acc > 0.74:
+                torch.save(model.state_dict(), save_path)
+                print(f"New checkpoint saved with val_acc: {val_acc:.4f} at {save_path}")
         writer.close()
         save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_{timestamp}.pth"
+        
         torch.save(model.state_dict(), save_path)
         print(f"Model saved to {save_path}")

@@ -43,9 +43,9 @@ class AudioDataset(Dataset):
         dataset_file = dataset_json_file
         if ration > 0.0:
             if train:
-                dataset_file = f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration/deepship_train_data_{ration}.json'
+                dataset_file = f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration_little/deepship_train_data_{ration:.2f}.json'
             else:
-                dataset_file = f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration/deepship_val_data_{ration}.json'
+                dataset_file = f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration_little/deepship_val_data_{ration:.2f}.json'
         with open(dataset_file, 'r') as fp:
             data_json = json.load(fp)
         self.index_dict = make_index_dict(label_csv_file)
@@ -54,15 +54,15 @@ class AudioDataset(Dataset):
         self.sr = sr
         self.transform = transform
         self.train = train
-
-        if self.transform == "mel":
-            self.mel_spec_transform = torchaudio.transforms.MelSpectrogram(
-                sample_rate=self.sr,  
-                n_fft=self.n_fft,
-                win_length=self.n_fft,
-                hop_length=512,
-                n_mels=128
-            )
+        self.target_length = 512
+        # if self.transform == "mel":
+        self.mel_spec_transform = torchaudio.transforms.MelSpectrogram(
+            sample_rate=self.sr,  
+            n_fft=self.n_fft,
+            win_length=self.n_fft,
+            hop_length=512,
+            n_mels=128
+        )
             
         # if self.transform == 'fbank':
         #     self.fbank_transform = torchaudio.compliance.kaldi.fbank(
@@ -77,6 +77,31 @@ class AudioDataset(Dataset):
         #     )
     def __len__(self):
         return len(self.data)
+    
+    def get_lofar(self, waveform):
+        """
+        计算 LOFAR 谱图 (通常使用大点数 FFT 提取线谱)
+        """
+        # 水下 LOFAR 常用的参数：大窗口以获得高频率分辨率
+        n_fft_lofar = 4096 
+        hop_lofar = 512
+        
+        # 使用 STFT 计算功率谱
+        spec = torch.stft(
+            waveform, 
+            n_fft=n_fft_lofar, 
+            hop_length=hop_lofar, 
+            win_length=n_fft_lofar,
+            window=torch.hann_window(n_fft_lofar).to(waveform.device),
+            return_complex=True
+        )
+        lofar = torch.abs(spec)
+        # 对数压缩
+        lofar = torch.log10(lofar + 1e-6)
+        # 取低频部分 (根据 DeepShip 采样率，通常关注低频段)
+        # 比如只取前 256 个频点
+        lofar = lofar[:, :256, :] 
+        return lofar
 
     def __getitem__(self, idx):
         path = self.data[idx]['wav']
@@ -86,7 +111,29 @@ class AudioDataset(Dataset):
         waveform, sr = torchaudio.load(path)
         waveform = (waveform - GLOBAL_MIN) / (GLOBAL_MAX - GLOBAL_MIN)
 
-        if self.transform == "fft":
+        if sr != 16000:
+                waveform = torchaudio.functional.resample(waveform, orig_freq=sr, new_freq=16000)
+        # ensure mono
+        if waveform.size(0) > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+
+        if self.transform == 'caf':
+            # ---- 特征 1: Mel 谱图 ----
+            mel_spec = self.mel_spec_transform(waveform) # [C, 128, T]
+            mel_spec = torch.log(mel_spec + 1e-6)
+            # 统一长度到 target_length
+            mel_spec = F.interpolate(mel_spec, size=self.target_length, mode='linear', align_corners=False)
+            mel_spec = mel_spec.squeeze(0).transpose(0, 1) # [T, 128]
+
+            # ---- 特征 2: LOFAR 谱图 ----
+            lofar_spec = self.get_lofar(waveform) # [C, F, T]
+            lofar_spec = F.interpolate(lofar_spec, size=self.target_length, mode='linear', align_corners=False)
+            lofar_spec = lofar_spec.squeeze(0).transpose(0, 1) # [T, F_lofar]
+
+            # 返回双特征及标签
+            return mel_spec, lofar_spec, torch.tensor(label, dtype=torch.long)
+
+        elif self.transform == "fft":
             # 补零或截断
             if waveform.size(1) < self.n_fft:
                 pad = self.n_fft - waveform.size(1)
@@ -114,11 +161,12 @@ class AudioDataset(Dataset):
                 window_type='hanning',
                 num_mel_bins=128,
                 dither=0.0,
+                frame_length=25,  # 25ms
                 frame_shift=10  # [n_frames, n_mel_bins]
             )
             fbank = fbank.transpose(0, 1).unsqueeze(0)  # [1, n_mel_bins, n_frames]
             fbank_resized = F.interpolate(
-                fbank, size=512, mode='linear', align_corners=False
+                fbank, size=256, mode='linear', align_corners=False
             )
             # 最终输出格式[C, F, T]
             return fbank_resized, torch.tensor(label, dtype=torch.long)
@@ -169,11 +217,7 @@ class AudioDataset(Dataset):
              # the output fbank shape is [time_frame_num, frequency_bins], e.g., [1024, 128]
             return fbank, torch.tensor(label, dtype=torch.long)
         elif self.transform == 'raw':        
-            if self.sr != 16000:
-                waveform = torchaudio.functional.resample(waveform, orig_freq=self.sr, new_freq=16000)
-            # ensure mono
-            if waveform.size(0) > 1:
-                waveform = waveform.mean(dim=0, keepdim=True)
+            
             
             # 数据增强（仅在训练时应用）
             if self.train:
@@ -184,7 +228,7 @@ class AudioDataset(Dataset):
                 
                 # 随机添加噪声
                 if torch.rand(1) < 0.2:
-                    noise = torch.randn_like(waveform) * 0.01
+                    noise = torch.randn_like(waveform) * 0.02
                     waveform = waveform + noise
             
             return waveform, torch.tensor(label, dtype=torch.long)

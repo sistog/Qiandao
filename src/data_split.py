@@ -25,7 +25,7 @@ def split_data(id_list, train_ratio=0.8):
 
 if __name__ == '__main__':
     id_list = get_id()
-    for train_ration in [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]:
+    for train_ration in [0.05, 0.10, 0.15, 0.20]:
         train_ids, val_ids = split_data(id_list, train_ratio=train_ration)
         # print("Train IDs:", train_ids)
         # print("Validation IDs:", val_ids)
@@ -47,8 +47,8 @@ if __name__ == '__main__':
         train_json = {"data": train_data}
         val_json = {"data": val_data}
 
-        os.makedirs('/data/zcx/wav_prj/Qiandao/src/datafiles/ration', exist_ok=True)
-        with open(f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration/deepship_train_data_{train_ration}.json', 'w') as f:
+        os.makedirs('/data/zcx/wav_prj/Qiandao/src/datafiles/ration_little', exist_ok=True)
+        with open(f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration_little/deepship_train_data_{train_ration:.2f}.json', 'w') as f:
             json.dump(train_json, f, indent= 2)
-        with open(f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration/deepship_val_data_{train_ration}.json', 'w') as f:
+        with open(f'/data/zcx/wav_prj/Qiandao/src/datafiles/ration_little/deepship_val_data_{train_ration:.2f}.json', 'w') as f:
             json.dump(val_json, f, indent= 2)   

@@ -112,7 +112,7 @@ def train_one_epoch(
     pbar = tqdm(dataloader, desc="Train", leave=True)
     for stft, mel, cqt, y in pbar:
         stft, mel, cqt, y = (
-            stft.to(device), mel.to(device), cqt.to(device), y.to(device)
+            mel.to(device), mel.to(device), mel.to(device), y.to(device)
         )
 
         optimizer.zero_grad()
@@ -159,7 +159,7 @@ def validate(model, dataloader, criterion, device):
     pbar = tqdm(dataloader, desc="Val  ", leave=False)
     for stft, mel, cqt, y in pbar:
         stft, mel, cqt, y = (
-            stft.to(device), mel.to(device), cqt.to(device), y.to(device)
+            mel.to(device), mel.to(device), mel.to(device), y.to(device)
         )
 
         output = model([stft, mel, cqt])

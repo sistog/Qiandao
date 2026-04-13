@@ -57,7 +57,7 @@ class AudioDataset(Dataset):
         self.target_length = 512
         # if self.transform == "mel":
         self.mel_spec_transform = torchaudio.transforms.MelSpectrogram(
-            sample_rate=self.sr,  
+            sample_rate=16000,  
             n_fft=self.n_fft,
             win_length=self.n_fft,
             hop_length=512,
@@ -109,7 +109,7 @@ class AudioDataset(Dataset):
         label = int(self.index_dict[label_str])
 
         waveform, sr = torchaudio.load(path)
-        waveform = (waveform - GLOBAL_MIN) / (GLOBAL_MAX - GLOBAL_MIN)
+        # waveform = (waveform - GLOBAL_MIN) / (GLOBAL_MAX - GLOBAL_MIN)
 
         if sr != 16000:
                 waveform = torchaudio.functional.resample(waveform, orig_freq=sr, new_freq=16000)
@@ -149,7 +149,7 @@ class AudioDataset(Dataset):
             mel_spec = self.mel_spec_transform(waveform)  # [1, 128, n_frames] [C, Mel_Bins, T]
             mel_spec = torch.log(mel_spec + 1e-6)
             mel_spec_resized = F.interpolate(
-                mel_spec, size=512, mode='linear', align_corners=False
+                mel_spec, size=256, mode='linear', align_corners=False
             )
             return mel_spec_resized, torch.tensor(label, dtype=torch.long)
         elif self.transform == "fbank":
@@ -166,7 +166,7 @@ class AudioDataset(Dataset):
             )
             fbank = fbank.transpose(0, 1).unsqueeze(0)  # [1, n_mel_bins, n_frames]
             fbank_resized = F.interpolate(
-                fbank, size=256, mode='linear', align_corners=False
+                fbank, size=512, mode='linear', align_corners=False
             )
             # 最终输出格式[C, F, T]
             return fbank_resized, torch.tensor(label, dtype=torch.long)

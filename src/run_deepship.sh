@@ -19,11 +19,11 @@ MODEL_PATH="/data/zcx/wav_prj/Qiandao/src/exp/Deepship/ckpt/Beats_best.pth"  # �
 CLASSES=4
 BATCH_SIZE=16
 NUM_WORKERS=4
-MODEL_NAME="beats"
+MODEL_NAME="audiolstm"  # 可选: cnn1d, cnn2d, lstm, resnetaudio, vit, caf, beats
 SR=32000
-TRANSFORM="raw"
+TRANSFORM="fbank"
 LR=2e-5
-EPOCHS=50
+EPOCHS=10
 FT_ENTIRE_NETWORK=True
 RATION=0.0  # 数据划分比例，0.0 表示不划分
 
@@ -32,38 +32,38 @@ RATION=0.0  # 数据划分比例，0.0 表示不划分
 # ------------------------
 # 执行 Python 脚本
 # ------------------------
-# for r in {0.2,0.3,0.4,0.5,0.6,0.7,0.8}; do
-#   python3 "${PYTHON_SCRIPT}" \
-#     --dataset "${DATASET}" \
-#     --mode "${MODE}" \
-#     --train_data_json "${TRAIN_JSON}" \
-#     --eval_data_json "${EVAL_JSON}" \
-#     --label_csv "${LABEL_CSV}" \
-#     --model_path "${MODEL_PATH}" \
-#     --classes "${CLASSES}"\
-#     --batch_size "${BATCH_SIZE}"\
-#     --model_name "${MODEL_NAME}"\
-#     --sr "${SR}"\
-#     --transform "${TRANSFORM}"\
-#     --lr "${LR}"\
-#     --num_epochs "${EPOCHS}"\
-#     --ft_entire_network FT_ENTIRE_NETWORK\
-#     --ration "$r"
-# done
-python3 "${PYTHON_SCRIPT}" \
-  --dataset "${DATASET}" \
-  --mode "${MODE}" \
-  --train_data_json "${TRAIN_JSON}" \
-  --eval_data_json "${EVAL_JSON}" \
-  --label_csv "${LABEL_CSV}" \
-  --model_path "${MODEL_PATH}" \
-  --classes "${CLASSES}"\
-  --batch_size "${BATCH_SIZE}"\
-  --model_name "${MODEL_NAME}"\
-  --sr "${SR}"\
-  --transform "${TRANSFORM}"\
-  --lr "${LR}"\
-  --num_epochs "${EPOCHS}"\
-  --ft_entire_network FT_ENTIRE_NETWORK\
-  --ration "${RATION}"\
-  --num_workers "${NUM_WORKERS}"
+for r in {0.05,0.10,0.15,0.20}; do
+  python3 "${PYTHON_SCRIPT}" \
+    --dataset "${DATASET}" \
+    --mode "${MODE}" \
+    --train_data_json "${TRAIN_JSON}" \
+    --eval_data_json "${EVAL_JSON}" \
+    --label_csv "${LABEL_CSV}" \
+    --model_path "${MODEL_PATH}" \
+    --classes "${CLASSES}"\
+    --batch_size "${BATCH_SIZE}"\
+    --model_name "${MODEL_NAME}"\
+    --sr "${SR}"\
+    --transform "${TRANSFORM}"\
+    --lr "${LR}"\
+    --num_epochs "${EPOCHS}"\
+    --ft_entire_network FT_ENTIRE_NETWORK\
+    --ration "$r"
+done
+# python3 "${PYTHON_SCRIPT}" \
+#   --dataset "${DATASET}" \
+#   --mode "${MODE}" \
+#   --train_data_json "${TRAIN_JSON}" \
+#   --eval_data_json "${EVAL_JSON}" \
+#   --label_csv "${LABEL_CSV}" \
+#   --model_path "${MODEL_PATH}" \
+#   --classes "${CLASSES}"\
+#   --batch_size "${BATCH_SIZE}"\
+#   --model_name "${MODEL_NAME}"\
+#   --sr "${SR}"\
+#   --transform "${TRANSFORM}"\
+#   --lr "${LR}"\
+#   --num_epochs "${EPOCHS}"\
+#   --ft_entire_network FT_ENTIRE_NETWORK\
+#   --ration "${RATION}"\
+#   --num_workers "${NUM_WORKERS}"

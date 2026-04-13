@@ -232,8 +232,8 @@ class CAF_AudioDataset(Dataset):
             waveform = waveform.mean(dim=0, keepdim=True)
 
         # 数据增强
-        # if self.train:
-        #     waveform = self._augment(waveform)
+        if self.train:
+            waveform = self._augment(waveform)
 
         # ── 提取三路特征 ──────────────────────────────────────────────
         stft_img = normalize(self._get_stft(waveform))   # [1, H, W]

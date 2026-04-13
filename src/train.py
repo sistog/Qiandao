@@ -11,7 +11,7 @@ from model.CNN1D_NET import AudioCNN1D
 from model.CNN2D_NET import AudioCNN2D
 from model.LSTM_NET import AudioLSTM
 from model.ResNet import ResNetAudio
-from model.ViT_model import SimpleViT
+from model.ViT_model import EnhancedAudioViT
 from model.ast_models import ASTModel
 from model.caf_model import CAF_ViT
 from model.Beats.Beats_Transfer import BEATsTransferLearningModel
@@ -216,7 +216,7 @@ if __name__ == "__main__":
     elif model_name.lower() == 'resnetaudio':
         model = ResNetAudio(num_classes=args.classes).to(device)
     elif model_name.lower() == 'vit':
-        model = SimpleViT(img_size=(128, 256), num_classes=args.classes).to(device)
+        model = EnhancedAudioViT(img_size=(128, 256), num_classes=args.classes).to(device)
     elif model_name.lower() == 'caf':
         model = CAF_ViT(
                     dim_a=128, 
@@ -283,7 +283,7 @@ if __name__ == "__main__":
     if args.mode == 'evaluate':
         val_data_path = args.eval_data_json
         label_csv_path = args.label_csv
-        test_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=False)
+        test_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=4096, transform=transform, sr=sr, ration=args.ration, train=False)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=args.num_workers, shuffle=False)
         model_path = args.model_path  # 修改为实际模型路径
         print(f"Loading model from {model_path} for evaluation...")
@@ -301,8 +301,8 @@ if __name__ == "__main__":
         val_data_path = args.eval_data_json
         label_csv_path = args.label_csv
 
-        train_dataset = AudioDataset(dataset_json_file=train_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=True)
-        val_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=8192, transform=transform, sr=sr, ration=args.ration, train=False)
+        train_dataset = AudioDataset(dataset_json_file=train_data_path, label_csv_file=label_csv_path, n_fft=4096, transform=transform, sr=sr, ration=args.ration, train=True)
+        val_dataset = AudioDataset(dataset_json_file=val_data_path, label_csv_file=label_csv_path, n_fft=4096, transform=transform, sr=sr, ration=args.ration, train=False)
 
         train_loader = DataLoader(train_dataset, batch_size=batch_size, num_workers=args.num_workers, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=args.num_workers, shuffle=False)

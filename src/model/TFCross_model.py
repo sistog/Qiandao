@@ -171,7 +171,7 @@ class CrossAttentionFusion(nn.Module):
         a_pool = a_fused.mean(dim=1)   # (B, D)
         b_pool = b_fused.mean(dim=1)   # (B, D)
 
-        return a_pool, b_pool
+        return a_pool, a_pool
         # fused = torch.cat([a_pool, b_pool], dim=-1)   # (B, 2D)
         # fused = self.proj(fused)
         # fused = self.norm_out(fused)

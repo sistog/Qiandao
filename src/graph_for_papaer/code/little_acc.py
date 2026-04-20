@@ -1,56 +1,57 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.font_manager import FontProperties
 
-# 1. 设置全局字体和刻度
-plt.rcParams['font.family'] = 'serif'
-plt.rcParams['font.serif'] = ['Times New Roman']
-plt.rcParams['xtick.labelsize'] = 12
-plt.rcParams['ytick.labelsize'] = 12
+# ===================== 服务器专用：加载宋体（绝对路径）=====================
+# 直接加载你提供的 SIMSUN.TTC，不依赖系统字体
+simsun = FontProperties(fname='/data/zcx/fonts/SIMSUN.TTC', size=12)
+
+# 全局配置（英文用 Times New Roman，中文用你路径里的宋体）
+plt.rcParams['font.family'] = 'Times New Roman'
+plt.rcParams['axes.unicode_minus'] = False  # 负号正常显示
+plt.rcParams['xtick.labelsize'] = 14
+plt.rcParams['ytick.labelsize'] = 14
 
 # 2. 数据准备
 categories = ['5%', '10%', '15%', '20%']
-models = ["Beats", "MFCA-Net", "ResNet", "CNN", "LSTM"]
+models = ["BEATs", "MFCA-Net", "ResNet18", "AST", "HTS-AT"]
 
 plot_results = {
-    "Beats": [0.5759, 0.6031, 0.6304, 0.6587],
+    "BEATs": [0.5759, 0.6031, 0.6304, 0.6587],
     "MFCA-Net": [0.5036, 0.5530, 0.5690, 0.5875],
-    "ResNet": [0.5304, 0.5656, 0.5851, 0.6137],
-    "CNN": [0.5023, 0.5410, 0.5537, 0.5742],
-    "LSTM": [0.4878, 0.5037, 0.5325, 0.5567]
+    "ResNet18": [0.5304, 0.5656, 0.5851, 0.6137],
+    "AST": [0.5023, 0.5410, 0.5537, 0.5742],
+    "HTS-AT": [0.4878, 0.5037, 0.5325, 0.5567]
 }
 
-# 颜色配置 (保持原代码风格)
+# 颜色配置
 colors = ['#B22222', '#08573B', '#4682B4', '#DAA520', '#808080']
 
 # 3. 创建 2x2 子图布局
 fig, axes = plt.subplots(2, 2, figsize=(12, 10), dpi=120)
-axes = axes.flatten() # 将 2x2 阵列展平为长度为 4 的列表
+axes = axes.flatten()
 
 # 4. 循环绘制每个类别的柱状图
 for i, cat in enumerate(categories):
     ax = axes[i]
     
-    # 提取当前类别下所有模型的值
     values = [plot_results[model][i] for model in models]
-    
-    # 绘制柱状图
     bars = ax.bar(models, values, color=colors, edgecolor='black', alpha=0.8)
     
-    # 设置子图细节
-    ax.set_title(f'Train Ration: {cat}', fontsize=16, fontweight='bold')
-    ax.set_ylim(0.45, 0.70) # 根据数据范围调整 y 轴
-    ax.set_ylabel('Accuracy', fontsize=14)
+    # ===================== 所有中文都指定宋体 =====================
+    ax.set_title(f'训练集比例: {cat}', fontsize=16, fontweight='bold', fontproperties=simsun)
+    ax.set_ylabel('准确率', fontsize=14, fontproperties=simsun)
     ax.grid(axis='y', ls='--', alpha=0.5)
     
-    # 在柱子上标注具体数值
+    # 柱子数值
     for bar in bars:
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., height + 0.005,
-                f'{height:.4f}', ha='center', va='bottom', fontsize=10)
+                f'{height:.4f}', ha='center', va='bottom', fontsize=12)
 
-# 5. 整体布局调整
+# 整体布局
 plt.tight_layout()
 
-# 保存并显示
-plt.savefig('Accuracy_Bar_Comparison.png', dpi=600)
-plt.show()
+# 保存（服务器必须用 savefig，不能用 plt.show()）
+plt.savefig('Accuracy_Bar_Comparison.png', dpi=600, bbox_inches='tight')
+plt.close()  # 释放内存

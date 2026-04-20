@@ -5,7 +5,7 @@ from torchvision import models
 class ResNetAudio(nn.Module):
     def __init__(
         self,
-        model_name="resnet50",  # 支持 'resnet18', 'resnet34', 'resnet50' 等
+        model_name="resnet18",  # 支持 'resnet18', 'resnet34', 'resnet50' 等
         num_classes=2,
         pretrained=True,
     ):

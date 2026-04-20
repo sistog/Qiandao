@@ -67,7 +67,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, global_step
 
 
 @torch.no_grad()
-def validate(model, dataloader, criterion, device):
+def validate(model, dataloader, criterion, device, classes=4):
     model.eval()
 
     total_loss = 0.0
@@ -75,8 +75,8 @@ def validate(model, dataloader, criterion, device):
     total = 0
 
     # 类别正确预测数和样本数
-    correct_per_class = [0] * 4  # 假设有4个类别，具体数量根据你的模型调整
-    total_per_class = [0] * 4   # 假设有4个类别，具体数量根据你的模型调整
+    correct_per_class = [0] * classes  # 假设有4个类别，具体数量根据你的模型调整
+    total_per_class = [0] * classes   # 假设有4个类别，具体数量根据你的模型调整
 
     pbar = tqdm(dataloader, desc="Val", leave=False)
 
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=lr * 0.1)
     
     criterion = nn.CrossEntropyLoss()
-    print("使用的模型为：", model_name, "数据集分割比例为：", args.ration)
+    print("使用的模型为：", model_name, "使用的数据集为", args.dataset, "数据集分割比例为：", args.ration)
     if args.mode == 'evaluate':
         val_data_path = args.eval_data_json
         label_csv_path = args.label_csv
@@ -330,7 +330,7 @@ if __name__ == "__main__":
             f.write("\n" + "="*60 + "\n\n")
         for epoch in range(num_epochs):
             train_loss, train_acc, global_step = train_one_epoch(model, train_loader, criterion, optimizer, device, global_step, writer)
-            val_loss, val_acc, val_aa = validate(model, val_loader, criterion, device)
+            val_loss, val_acc, val_aa = validate(model, val_loader, criterion, device, classes = args.classes)
             log_str = (f"Epoch [{epoch+1}/{num_epochs}] "
                 f"Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.4f} | "
                 f"Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.4f}, Val AA: {val_aa:.4f}")

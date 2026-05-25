@@ -46,7 +46,7 @@ def plot_features(file_path):
     ax = plt.subplot(2, 4, 2)
     f_psd, psd = scipy.signal.welch(y, fs=sr, nperseg=4096)
     plt.plot(f_psd, librosa.power_to_db(psd, ref=np.max), color=C_BRIGHT)
-    plt.title("功率谱密度", fontproperties=font_cn)
+    plt.title("（b）PSD", fontproperties=font_cn)
     plt.xlabel("频率 (Hz)", fontproperties=font_cn)
     plt.xlim(0, nyquist)
     ax.tick_params(axis='x', labelsize=16)
@@ -57,7 +57,7 @@ def plot_features(file_path):
     D_lofar = np.abs(librosa.stft(y, n_fft=2048, hop_length=512))
     librosa.display.specshow(librosa.amplitude_to_db(D_lofar, ref=np.max),
                              sr=sr, x_axis='time', y_axis='linear', cmap=COLOR_MAP)
-    plt.title("LOFAR谱", fontproperties=font_cn)
+    plt.title("（c）LOFAR谱", fontproperties=font_cn)
     ax.tick_params(axis='x', labelsize=16)
     ax.tick_params(axis='y', labelsize=16)
 
@@ -66,7 +66,7 @@ def plot_features(file_path):
     D = np.abs(librosa.stft(y))
     librosa.display.specshow(librosa.amplitude_to_db(D, ref=np.max),
                              sr=sr, x_axis='time', y_axis='log', cmap=COLOR_MAP)
-    plt.title("功率谱", fontproperties=font_cn)
+    plt.title("（d）功率谱", fontproperties=font_cn)
     ax.tick_params(axis='x', labelsize=16)
     ax.tick_params(axis='y', labelsize=16)
 
@@ -109,7 +109,7 @@ def plot_features(file_path):
     ax = plt.subplot(2, 4, 6)
     mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
     librosa.display.specshow(mfccs, x_axis='time', y_axis='mel', sr=sr, cmap=COLOR_MAP)
-    plt.title("MFCC", fontproperties=font_cn)
+    plt.title("（f）MFCC", fontproperties=font_cn)
     ax.tick_params(axis='x', labelsize=16)
     ax.tick_params(axis='y', labelsize=16)
 
@@ -118,7 +118,7 @@ def plot_features(file_path):
     mel = librosa.feature.melspectrogram(y=y, sr=sr)
     librosa.display.specshow(librosa.power_to_db(mel, ref=np.max),
                              sr=sr, x_axis='time', y_axis='mel', cmap=COLOR_MAP)
-    plt.title("Mel谱图", fontproperties=font_cn)
+    plt.title("（g）Mel谱图", fontproperties=font_cn)
     ax.tick_params(axis='x', labelsize=16)
     ax.tick_params(axis='y', labelsize=16)
 
@@ -127,7 +127,7 @@ def plot_features(file_path):
     cqt = np.abs(librosa.cqt(y, sr=sr))
     librosa.display.specshow(librosa.amplitude_to_db(cqt, ref=np.max),
                              sr=sr, x_axis='time', y_axis='cqt_note', cmap=COLOR_MAP)
-    plt.title("CQT 谱图", fontproperties=font_cn)
+    plt.title("（h）CQT 谱图", fontproperties=font_cn)
     ax.tick_params(axis='x', labelsize=16)
     ax.tick_params(axis='y', labelsize=16)
 

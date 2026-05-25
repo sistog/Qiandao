@@ -15,6 +15,7 @@ from model.ViT_model import EnhancedAudioViT
 from model.ast_models import ASTModel
 from model.caf_model import CAF_ViT
 from model.Beats.Beats_Transfer import BEATsTransferLearningModel
+from model.Beats.BEATs import FocalLossMulti
 from model.WavLm.WavLM_Classfier import WavLMClassifier
 from dataset.qiandao_dataset import AudioDataset
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, cohen_kappa_score
@@ -216,7 +217,7 @@ if __name__ == "__main__":
     elif model_name.lower() == 'resnetaudio':
         model = ResNetAudio(num_classes=args.classes).to(device)
     elif model_name.lower() == 'vit':
-        model = EnhancedAudioViT(img_size=(128, 256), num_classes=args.classes).to(device)
+        model = EnhancedAudioViT(img_size=(128, 512), num_classes=args.classes).to(device)
     elif model_name.lower() == 'caf':
         model = CAF_ViT(
                     dim_a=128, 
@@ -278,7 +279,10 @@ if __name__ == "__main__":
     from torch.optim.lr_scheduler import CosineAnnealingLR
     scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=lr * 0.1)
     
-    criterion = nn.CrossEntropyLoss()
+    if model_name.lower() == 'beats':
+        criterion = FocalLossMulti(gamma=2.0, alpha=[0.23508649715546268, 0.26984790433066297, 0.2594914663880181, 0.23557413212585626])  # 根据类别不平衡调整 alpha
+    else:
+        criterion = nn.CrossEntropyLoss()
     print("使用的模型为：", model_name, "使用的数据集为", args.dataset, "数据集分割比例为：", args.ration)
     if args.mode == 'evaluate':
         val_data_path = args.eval_data_json
@@ -350,18 +354,18 @@ if __name__ == "__main__":
                 save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/ckpt/{model_name}_best.pth"
             else:
                 save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_best.pth"
-            if val_acc > best_acc:
-                best_acc = val_acc
-                torch.save(model.state_dict(), save_path)
-            if args.ration > 0.0:
-                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/ckpt/{model_name}_acc{val_acc:.4f}.pth"
-            else:
-                save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_acc{val_acc:.4f}.pth"
-            if val_acc > 0.74:
-                torch.save(model.state_dict(), save_path)
-                print(f"New checkpoint saved with val_acc: {val_acc:.4f} at {save_path}")
+            # if val_acc > best_acc:
+            #     best_acc = val_acc
+            #     torch.save(model.state_dict(), save_path)
+            # if args.ration > 0.0:
+            #     save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}_{args.ration:.2f}/ckpt/{model_name}_acc{val_acc:.4f}.pth"
+            # else:
+            #     save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_acc{val_acc:.4f}.pth"
+            # if val_acc > 0.74:
+            #     torch.save(model.state_dict(), save_path)
+            #     print(f"New checkpoint saved with val_acc: {val_acc:.4f} at {save_path}")
         writer.close()
         save_path = f"/data/zcx/wav_prj/Qiandao/src/exp/{dataset_name}/ckpt/{model_name}_{timestamp}.pth"
         
-        torch.save(model.state_dict(), save_path)
-        print(f"Model saved to {save_path}")
+        # torch.save(model.state_dict(), save_path)
+        # print(f"Model saved to {save_path}")

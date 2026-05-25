@@ -155,7 +155,7 @@ class AudioDataset(Dataset):
         elif self.transform == "fbank":
             fbank = torchaudio.compliance.kaldi.fbank(
                 waveform,
-                sample_frequency=self.sr,
+                sample_frequency=16000,
                 use_log_fbank=True,
                 use_energy=False,
                 window_type='hanning',
@@ -209,10 +209,11 @@ class AudioDataset(Dataset):
             if timem != 0:
                 fbank = timem(fbank)
             # squeeze it back, it is just a trick to satisfy new torchaudio version
-            fbank = fbank.squeeze(0)
-            fbank = torch.transpose(fbank, 0, 1)
+            # fbank = fbank.squeeze(0)
+            # fbank = torch.transpose(fbank, 0, 1)
             
             fbank = (fbank - norm_mean) / (norm_std + 1e-5)
+            # print(f"fbank shape: {fbank.shape}")
 
              # the output fbank shape is [time_frame_num, frequency_bins], e.g., [1024, 128]
             return fbank, torch.tensor(label, dtype=torch.long)

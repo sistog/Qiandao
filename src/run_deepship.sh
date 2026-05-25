@@ -11,7 +11,7 @@ PYTHON_SCRIPT="/data/zcx/wav_prj/Qiandao/src/train.py"
 
 # 默认参数
 MODE="train"   # train / evaluate
-DATASET="deepship"  # 数据集名称
+DATASET="Deepship"  # 数据集名称
 TRAIN_JSON="/data/zcx/wav_prj/Qiandao/src/datafiles/deepship_train_data.json"
 EVAL_JSON="/data/zcx/wav_prj/Qiandao/src/datafiles/deepship_eval_data.json"
 LABEL_CSV="/data/zcx/wav_prj/Qiandao/src/datafiles/deepship_class_map.csv"
@@ -21,8 +21,8 @@ BATCH_SIZE=16
 NUM_WORKERS=8
 MODEL_NAME="beats"  # 可选: cnn1d, cnn2d, lstm, resnetaudio, vit, caf, beats
 SR=16000
-TRANSFORM="raw"
-LR=1e-6
+TRANSFORM="raw"  # 可选: stft, mel, cqt, fbank
+LR=2e-5
 EPOCHS=100
 FT_ENTIRE_NETWORK=True
 RATION=0.0  # 数据划分比例，0.0 表示不划分

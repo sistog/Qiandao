@@ -1,0 +1,8 @@
+2026-05-20 12:27:09,872 - __main__ - INFO - 程序启动
+2026-05-22 09:54:01,563 - __main__ - INFO - 程序启动
+2026-05-22 09:54:17,395 - __main__ - INFO - 增强前样本文件为/data/zcx/wav_prj/PANN_Models_DeepShip-main/Datasets/DeepShip/Segments_3s_16000hz/Cargo/87/87_Cargo-Segment_95.wav
+2026-05-22 09:54:17,396 - __main__ - INFO - 已添加高斯噪声，SNR = 20.0 dB
+2026-05-22 09:56:27,154 - __main__ - INFO - 程序启动
+2026-05-22 09:56:28,155 - __main__ - INFO - 增强前样本文件为/data/zcx/wav_prj/PANN_Models_DeepShip-main/Datasets/DeepShip/Segments_3s_16000hz/Cargo/87/87_Cargo-Segment_95.wav
+2026-05-22 09:56:28,161 - __main__ - INFO - 已添加高斯噪声，SNR = 20.0 dB
+2026-05-22 09:56:28,161 - __main__ - WARNING - 自定义噪声文件不存在:  

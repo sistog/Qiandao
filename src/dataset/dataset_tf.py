@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 
+
 # ──────────────────────────────────────────────
 #  全局归一化参数（可按需调整）
 # ──────────────────────────────────────────────
@@ -131,19 +132,37 @@ class CAF_AudioDataset(Dataset):
         return spec.squeeze(0)                      # [1, H, W]
 
     def _get_mel(self, waveform: torch.Tensor) -> torch.Tensor:
-        """
-        Mel Spectrogram → log 幅度
-        输出: [1, target_freq, target_time]
-        """
-        mel = self.mel_transform(waveform)         # [1, n_mels, T]
-        mel = torch.log(mel + 1e-6)
-        mel = F.interpolate(
-            mel.unsqueeze(0),
-            size=(self.target_freq, self.target_time),
+        # 1. 提取 Fbank 特征
+        # waveform shape 预期为 [1, T]
+        fbank = torchaudio.compliance.kaldi.fbank(
+            waveform,
+            sample_frequency=16000,
+            use_log_fbank=True,
+            use_energy=False,
+            window_type='hanning',
+            num_mel_bins=128,
+            dither=0.0,
+            frame_length=25,
+            frame_shift=10
+        ) # 返回 [n_frames, 128]
+
+        # 2. 调整维度以适配 interpolate (Batch, Channel, H, W)
+        # 转换为 [1, 1, 128, n_frames]
+        fbank = fbank.transpose(0, 1).unsqueeze(0).unsqueeze(0)
+
+        # 3. 插值缩放
+        fbank_resized = F.interpolate(
+            fbank, 
+            size=(self.target_freq, self.target_time), 
             mode='bilinear',
-            align_corners=False,
-        ).squeeze(0)                               # [1, H, W]
-        return mel
+            align_corners=False
+        )
+
+        # 4. 归一化 (可选，建议添加，例如针对当前 batch 的归一化)
+        # fbank_resized = (fbank_resized - fbank_resized.mean()) / (fbank_resized.std() + 1e-6)
+
+        # 5. 返回 [1, H, W]
+        return fbank_resized.squeeze(1) # 从 [1, 1, H, W] 变为 [1, H, W]
 
     def _get_cqt(self, waveform: torch.Tensor) -> torch.Tensor:
         """

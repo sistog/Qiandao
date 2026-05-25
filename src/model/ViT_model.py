@@ -13,6 +13,51 @@ def drop_path(x, drop_prob: float = 0., training: bool = False):
     output = x.div(keep_prob) * random_tensor
     return output
 
+class SliceEmbedding(nn.Module):
+    def __init__(self, in_chans=1, embed_dim=384, slice_len=8, stride=4):
+        super().__init__()
+
+        self.proj = nn.Conv2d(
+            in_chans,
+            embed_dim,
+            kernel_size=(128, 1),   # 👉 只在时间维切
+            stride=(128, 1)
+        )
+
+    def forward(self, x):
+        # x: (B, F, T)
+        # x = x.unsqueeze(1)   # (B, 1, F, T)
+
+        x = self.proj(x)     # (B, C, F, T')
+        # print(x.shape)  # Debug: 查看卷积输出形状
+        x = x.flatten(2).transpose(1, 2)
+
+        return x             # (B, N, C)
+
+class PatchEmbed(nn.Module):
+    """ 
+    原始 ViT 的 Patch Embedding：直接用一个大卷积实现切块和线性映射
+    这里我们用 ConvStem 替代它，提取更丰富的底层特征
+    """
+    def __init__(self, img_size=(128, 256), patch_size=(16, 16), in_chans=1, embed_dim=768):
+        super().__init__()
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.in_chans = in_chans
+        self.embed_dim = embed_dim
+
+        # 计算切块后的数量
+        self.num_patches = (img_size[0] // patch_size[0]) * (img_size[1] // patch_size[1])
+        
+        # 用一个卷积层替代原始的切块 + 线性映射
+        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+
+    def forward(self, x):
+        # 输入 x 的 shape: [B, C, H, W]
+        x = self.proj(x)  # [B, embed_dim, H/patch_h, W/patch_w]
+        x = x.flatten(2).transpose(1, 2)  # [B, num_patches, embed_dim]
+        return x
+
 class ConvStem(nn.Module):
     """ 
     卷积前置网络：代替原始简单的 Patch Embedding
@@ -42,9 +87,9 @@ class EnhancedAudioViT(nn.Module):
         in_channels=1, 
         num_classes=4, 
         embed_dim=384,          # 中型维度，适合水声数据量
-        depth=8, 
-        num_heads=8, 
-        mlp_ratio=4.0, 
+        depth=4, 
+        num_heads=1, 
+        mlp_ratio=2.0, 
         dropout=0.1,
         drop_path_rate=0.1      # 随机深度率
     ):
@@ -52,9 +97,14 @@ class EnhancedAudioViT(nn.Module):
         
         # 1. Conv Stem 层
         # 经过 3 层 stride=2 的卷积后，H和W会缩小为原来的 1/8
-        self.stem = ConvStem(in_channels, embed_dim)
-        reduced_h, reduced_w = img_size[0] // 8, img_size[1] // 8
-        self.num_patches = reduced_h * reduced_w
+        self.stem = SliceEmbedding(
+            in_chans=in_channels,
+            embed_dim=embed_dim,
+            slice_len=64,   # 切片长度，时间维度上每8帧切一次
+            stride=64     # 切片步长，时间维度上每4帧切一次，产生重叠切片
+        )
+        
+        self.num_patches = 512
 
         # 2. Tokens & Embeddings
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
@@ -106,11 +156,13 @@ class EnhancedAudioViT(nn.Module):
         # [Step 1] 特征提取与 Patch 化
         # 输入 (B, 1, 128, 256) -> Stem -> (B, embed_dim, 16, 32)
         x = self.stem(x)
-        x = x.flatten(2).transpose(1, 2) # (B, 512, embed_dim)
+        # print(f"After Stem, x shape: {x.shape}")  # Debug: 查看 Stem 输出形状
+        # x = x.flatten(2).transpose(1, 2) # (B, 512, embed_dim)
         
         # [Step 2] Add CLS & Position
         cls_tokens = self.cls_token.expand(B, -1, -1)
         x = torch.cat((cls_tokens, x), dim=1) # (B, 513, embed_dim)
+       
         x = x + self.pos_embed
         x = self.pos_drop(x)
         
@@ -135,9 +187,9 @@ if __name__ == "__main__":
     # 模拟水声频谱图输入
     # 假设采样率和处理后得到 128x256 的 Fbank
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = EnhancedAudioViT(img_size=(128, 256), num_classes=4).to(device)
+    model = EnhancedAudioViT(img_size=(128, 512), num_classes=4).to(device)
     
-    dummy_input = torch.randn(8, 1, 128, 256).to(device)
+    dummy_input = torch.randn(8, 1, 128, 512).to(device)
     output = model(dummy_input)
     
     print(f"Model Parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")

@@ -29,7 +29,7 @@ CONFIG = dict(
     # 数据
     sr          = 16000,
     target_freq = 128,
-    target_time = 256,
+    target_time = 512,
     batch_size  = 16,
     num_workers = 4,
 
@@ -45,7 +45,7 @@ CONFIG = dict(
 
     # 训练
     epochs       = 50,
-    lr           = 1e-4,
+    lr           = 1e-3,
     weight_decay = 1e-5,
     lambda_kl    = 0.01,       # MultiHeadLoss KL 正则项权重
     grad_clip    = 5.0,        # 梯度裁剪上限，None 表示不裁剪
@@ -112,7 +112,7 @@ def train_one_epoch(
     pbar = tqdm(dataloader, desc="Train", leave=True)
     for stft, mel, cqt, y in pbar:
         stft, mel, cqt, y = (
-            mel.to(device), mel.to(device), mel.to(device), y.to(device)
+            stft.to(device), mel.to(device), cqt.to(device), y.to(device)
         )
 
         optimizer.zero_grad()

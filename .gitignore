@@ -11,3 +11,5 @@ results/
 *.txt
 *.png
 *.npy
+src/dataset
+src/exp
